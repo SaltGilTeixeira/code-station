@@ -34,8 +34,16 @@ final class AppNotifier: NSObject {
     func turnEnded(sessionID: UUID, sessionTitle: String, failure: String?) {
         // Played from here rather than left to the notification, so a turn finishing is
         // heard while the window is open on another session too, and so the chosen sound
-        // is the only one: a notification carrying its own would double up on it.
-        if isBundled { Preferences.sessionFinishedSound().play() }
+        // is the only one: a notification carrying its own would double up on it. It
+        // waits for the beat the sidebar's tick starts drawing on, so sound and sight
+        // land together.
+        if isBundled {
+            let sound = Preferences.sessionFinishedSound()
+            Task {
+                try? await Task.sleep(for: TurnMotion.soundBeat)
+                sound.play()
+            }
+        }
         post(identifier: "finished-\(sessionID.uuidString)",
              sessionID: sessionID,
              title: sessionTitle,

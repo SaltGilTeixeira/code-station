@@ -166,6 +166,8 @@ struct SessionView: View {
     @State private var commandFindMonitor = WindowKeyMonitor(.command, "f")
     @FocusState private var findFocused: Bool
     @State private var transcriptScrollRequest = 0
+    // When a prompt last left this composer, so the bubble it becomes can lift into place.
+    @State private var promptSentAt: Date?
     @State private var agentFocus: AgentTranscriptFocus?
     @State private var recapOpen = false
     @State private var recapNeedsAttention = false
@@ -1570,7 +1572,8 @@ struct SessionView: View {
                                 runInShell(command, directory: projectPath)
                             },
                             showInExplorer: showInExplorer,
-                            promptMenu: promptMenu(for: message))
+                            promptMenu: promptMenu(for: message),
+                            arriving: isArriving(message))
                     // Every message is on screen now, and a streaming turn rewrites
                     // the last one many times a second. Without this, each of those
                     // redraws every message in the transcript, parsing its markdown
@@ -1579,6 +1582,13 @@ struct SessionView: View {
                     .environment(\.runningAgents, runner.runningAgents(sessionID))
                     .environment(\.activeTranscriptTools, runner.runningTools(sessionID))
                     .environment(\.agentTranscriptFocus, agentFocus)
+                    .transition(.fadeIn)
+            }
+
+            if !state.isBusy, let ending = runner.lastTurnEnding(sessionID),
+               let receipt = TurnReceipt(lastTurnIn: session.messages, projectPath: projectPath) {
+                TurnSeal(ending: ending, receipt: receipt)
+                    .id(ending.ended)
                     .transition(.fadeIn)
             }
 
@@ -1657,6 +1667,14 @@ struct SessionView: View {
         .modifier(SentPromptCommands(agent: session.agent,
                                      workingDirectories: store.workingDirectories(for: session),
                                      latestPromptID: session.messages.last(where: { $0.role == .user })?.id))
+    }
+
+    // Only the prompt this composer has just sent. A bubble drawn again later, or one
+    // queued earlier and sent by the runner, is already where it belongs.
+    private func isArriving(_ message: ChatMessage) -> Bool {
+        guard message.role == .user, let promptSentAt else { return false }
+        return message.date >= promptSentAt.addingTimeInterval(-0.5)
+            && Date().timeIntervalSince(promptSentAt) < 1.5
     }
 
     // What to do with what the turn left behind. It sits at the end of the conversation
@@ -1884,6 +1902,7 @@ struct SessionView: View {
                         onRecallUp: { runner.recallEarlier(sessionID, store: store) },
                         onRecallDown: { runner.recallLater(sessionID, store: store) },
                         onSend: {
+                            promptSentAt = .now
                             transcriptPinnedToBottom = true
                             transcriptScrollRequest += 1
                         },

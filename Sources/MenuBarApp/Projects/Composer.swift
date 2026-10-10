@@ -97,54 +97,29 @@ struct Composer<Above: View, Accessory: View>: View {
                     accessory
                 }
 
-                if canSend {
+                if busy, canSend {
                     Button(action: send) {
-                        Image(systemName: busy ? "arrow.up.to.line" : "arrow.up")
+                        Image(systemName: "arrow.up.to.line")
                             .font(.system(size: 13, weight: .bold))
                             .foregroundStyle(.white)
                             .frame(width: 32, height: 32)
-                            .background(Circle().fill(busy ? Theme.accentFill : Color.black.opacity(0.88)))
+                            .background(Circle().fill(Theme.accentFill))
                             .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .hoverLift(amount: Motion.smallLift)
-                    .accessibilityLabel(busy ? "Queue prompt" : "Send prompt")
-                    .appTooltip(busy ? "Queue this for when the turn ends"
-                                     : "Send (shift-return for a new line)")
+                    .accessibilityLabel("Queue prompt")
+                    .appTooltip("Queue this for when the turn ends")
                     .transition(.fadeIn)
                 }
 
-                if state == .stopping {
-                    Image(systemName: "hourglass")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(Theme.field))
-                        .appTooltip("Stopping this turn")
-                } else if busy {
-                    Button { runner.stop(sessionID) } label: {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 32, height: 32)
-                            .background(Circle().fill(Theme.deletion))
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .hoverLift(amount: Motion.smallLift)
-                    .accessibilityLabel("Stop this turn")
-                    .appTooltip("Stop this turn (esc)")
-                } else if !canSend {
-                    // The button keeps its place so the field does not change width as
-                    // soon as there is something to send.
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(Color.black.opacity(0.22)))
-                }
+                // Send and Stop share one place, so a turn starting reads as the button
+                // turning into the other, and the field never changes width over it.
+                primaryButton(state: state, canSend: canSend)
             }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: canSend)
+            .animation(reduceMotion ? nil : TurnMotion.swap, value: busy)
+            .animation(reduceMotion ? nil : TurnMotion.swap, value: state == .stopping)
         }
         .padding(.horizontal, inset)
         .padding(.vertical, 14)
@@ -174,6 +149,50 @@ struct Composer<Above: View, Accessory: View>: View {
             attach(Attachments.fromDrop(urls))
             return true
         } isTargeted: { dropTargeted = $0 }
+    }
+
+    // One button that sends, stops, or waits for a stop to land. It stays put while its
+    // glyph turns into the next one: the button carries views AppKit lays out itself,
+    // and those cannot be spun or shrunk. With nothing to send it keeps its place, so the
+    // field does not change width as soon as there is something.
+    private func primaryButton(state: SessionState, canSend: Bool) -> some View {
+        let stopping = state == .stopping
+        let busy = state.isBusy
+        return Button {
+            if busy { runner.stop(sessionID) } else { send() }
+        } label: {
+            ZStack {
+                if stopping {
+                    primaryGlyph("hourglass", size: 12, ink: .secondary, fill: Theme.field)
+                        .transition(.buttonSwap)
+                } else if busy {
+                    primaryGlyph("stop.fill", size: 12, ink: .white, fill: Theme.deletion)
+                        .transition(.buttonSwap)
+                } else {
+                    primaryGlyph("arrow.up", size: 13, ink: .white,
+                                 fill: Color.black.opacity(canSend ? 0.88 : 0.22))
+                        .transition(.buttonSwap)
+                }
+            }
+            .frame(width: 32, height: 32)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(stopping || (!busy && !canSend))
+        .hoverLift(amount: Motion.smallLift)
+        .accessibilityLabel(stopping ? "Stopping this turn" : busy ? "Stop this turn" : "Send prompt")
+        .appTooltip(stopping ? "Stopping this turn"
+                    : busy ? "Stop this turn (esc)"
+                    : canSend ? "Send (shift-return for a new line)" : "")
+    }
+
+    private func primaryGlyph(_ symbol: String, size: CGFloat, ink: some ShapeStyle,
+                              fill: Color) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: size, weight: .bold))
+            .foregroundStyle(ink)
+            .frame(width: 32, height: 32)
+            .background(Circle().fill(fill))
     }
 
     // What is waiting to go out with the next prompt. Long file names are common, so the

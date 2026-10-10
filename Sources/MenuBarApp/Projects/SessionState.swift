@@ -24,6 +24,11 @@ enum SessionState: Equatable {
         case .idle, .failed: false
         }
     }
+
+    var isFailed: Bool {
+        if case .failed = self { return true }
+        return false
+    }
 }
 
 // Why a session belongs in the activity menu. A question outranks a run because it tells

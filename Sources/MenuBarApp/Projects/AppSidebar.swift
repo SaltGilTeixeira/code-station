@@ -611,13 +611,19 @@ struct AppSidebar: View {
             // card is what says so: its light, its line and its time come from there.
             let live = LiveConversation.of(session.id, store: store, runner: runner)
                 ?? session
+            let state = runner.state(live.id)
             SidebarRailRow(colour: tint.colour, selectedColour: Theme.accent,
-                           selected: selected, pinned: session.isPinned) {
+                           selected: selected, pinned: session.isPinned,
+                           thread: ThreadPhase(busy: state.isBusy,
+                                               failed: state.isFailed,
+                                               finished: store.isUnread(session.id)),
+                           threadEndedCleanly: runner.lastTurnEnding(live.id)?.outcome == .finished) {
                 SessionCard(session: session,
                             worktrees: store.worktreeCoverage(for: session),
                             selected: selected,
-                            busy: runner.state(live.id).isBusy,
-                            waiting: runner.state(live.id) == .waiting,
+                            busy: state.isBusy,
+                            failed: state.isFailed,
+                            waiting: state == .waiting,
                             waitIsStale: runner.waitIsStale(live.id),
                             waitingSince: runner.waitingSince(live.id),
                             needsInput: runner.question(live.id) != nil,
@@ -1463,6 +1469,7 @@ private struct WorkspaceHeaderRow: View {
                             tint: Theme.workspaceTint,
                             stacked: true,
                             pinned: workspace.isPinned)
+                            .threadNod(running: runningCount)
                         Text(workspace.name)
                             .font(.system(size: 13.5, weight: .semibold))
                             .lineLimit(1)
@@ -1615,6 +1622,7 @@ private struct ProjectHeaderRow: View {
                             tint: Theme.projectTint(for: project.name),
                             dashed: project.kind == .adHoc,
                             pinned: project.isPinned)
+                            .threadNod(running: runningCount)
                         HStack(spacing: 5) {
                             if isMissing {
                                 Image(systemName: "exclamationmark.triangle.fill")
@@ -1827,6 +1835,7 @@ private struct SessionCard: View {
     let worktrees: WorktreeCoverage
     let selected: Bool
     let busy: Bool
+    let failed: Bool
     let waiting: Bool
     let waitIsStale: Bool
     // When the turn stopped working, which is what a wait has to be counted from. The
@@ -1902,8 +1911,19 @@ private struct SessionCard: View {
         }
     }
 
+    // A failed turn needs the user like any other unread end, but says what happened
+    // in its own word and colour, so the colour is never the only sign.
+    private var word: String { failed ? "FAILED" : tone.word }
+
+    private var band: StateBand? {
+        failed
+            ? StateBand(fill: Theme.warningBackground, stripe: nil, drifts: false,
+                        word: Theme.warningText)
+            : tone.band
+    }
+
     private var accessibilityStatus: String {
-        var labels = [tone.word.capitalized]
+        var labels = [word.capitalized]
         if selected { labels.append("Currently viewing") }
         if session.isPinned { labels.append("Pinned") }
         if uncommitted { labels.append("Uncommitted changes") }
@@ -1917,12 +1937,12 @@ private struct SessionCard: View {
     // across the top of the card. The title below stays on the plain card, so it reads as
     // easily as an idle one.
     private var cardContent: some View {
-        let band = tone.band
+        let band = band
         let edge: CGFloat = selected ? 9 : 8
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
-                StateLight(tone: tone)
-                Text(tone.word)
+                StateLight(tone: tone, colour: failed ? Theme.deletion : nil)
+                Text(word)
                     .font(.mono(9, .semibold))
                     .kerning(0.9)
                     .foregroundStyle(band?.word ?? tone.colour)
@@ -1992,14 +2012,14 @@ private struct SessionCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 9))
         .overlay(RoundedRectangle(cornerRadius: 9)
             .stroke(cardStroke, lineWidth: selected ? 1.4 : 1.2))
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: [busy, finished])
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: [busy, finished, failed])
         .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: selected)
         .contentShape(RoundedRectangle(cornerRadius: 9))
     }
 
     // The hint carries the branch and full path because the compact card leaves both out.
     private var tooltip: Tooltip {
-        var rows = [Tooltip.Row(label: "State", value: tone.word.capitalized)]
+        var rows = [Tooltip.Row(label: "State", value: word.capitalized)]
         if let branch {
             rows.append(Tooltip.Row(label: "Branch", value: branch))
         }
@@ -2045,6 +2065,7 @@ private struct SessionCard: View {
 
     private var cardStroke: Color {
         if selected { return Theme.accent.opacity(0.64) }
+        if failed { return Theme.deletion.opacity(0.45) }
         return tone == .idle ? .clear : tone.ring
     }
 }

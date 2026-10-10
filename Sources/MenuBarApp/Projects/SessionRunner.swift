@@ -87,6 +87,9 @@ final class SessionRunner {
         // turn is a class, so a task list changing inside one is not a change any screen
         // would be told about, and the rows that name the wait would go stale.
         var wait: Wait?
+        // How the last turn the user asked for ended, for the seal under its answer. Held
+        // in memory only, since nothing on disk says when a turn started.
+        var lastEnding: TurnEnding?
 
         // A turn inside a command, parked on a question or holding for a task is quiet
         // for a reason. Only silence with none of those is a turn that has stopped moving.
@@ -360,6 +363,8 @@ final class SessionRunner {
 
     // When the turn this session is running now began, for the strip that counts it up.
     func turnStarted(_ sessionID: UUID) -> Date? { records[sessionID]?.turn?.startedAt }
+
+    func lastTurnEnding(_ sessionID: UUID) -> TurnEnding? { records[sessionID]?.lastEnding }
 
     // The tasks a held-open turn is waiting for, which is what the wait can be named
     // after. Empty for every other state, including a turn that started a task and is
@@ -3108,6 +3113,9 @@ final class SessionRunner {
                 return
             }
             let unseen: Bool
+            records[sessionID]?.lastEnding = TurnEnding(
+                started: turn.startedAt, ended: Date(),
+                outcome: turn.stopFailure == nil ? .stopped : .failed)
             if let failure = turn.stopFailure {
                 setState(.failed(failure), for: sessionID)
                 unseen = store.noteTurnEnded(for: sessionID)
@@ -3128,6 +3136,8 @@ final class SessionRunner {
         let missingCompletion = !turn.agent.asksPermissions && !turn.receivedCompletion
         guard turn.failure != nil || status != 0 || missingCompletion else {
             SessionLog.note("turn finished", session: sessionID)
+            records[sessionID]?.lastEnding = TurnEnding(started: turn.startedAt, ended: Date(),
+                                                        outcome: .finished)
             setState(.idle, for: sessionID)
             let titleQueued = queueAutomaticTitle(after: turn, sessionID: sessionID,
                                                   store: store)
@@ -3194,6 +3204,8 @@ final class SessionRunner {
         if store.session(sessionID)?.hasAgentConversation == true {
             records[sessionID]?.continuable = .failedTurn
         }
+        records[sessionID]?.lastEnding = TurnEnding(started: turn.startedAt, ended: Date(),
+                                                    outcome: .failed)
         setState(.failed(message), for: sessionID)
         store.release(sessionID, for: .running)
         resumeDesignWorkflowQueues(after: sessionID, store: store)

@@ -68,10 +68,13 @@ enum SessionTone {
 struct StateLight: View {
     let tone: SessionTone
     var size: CGFloat = 6
+    // A failed turn shares its tone with anything else that needs the user, and is told
+    // apart by wearing the error colour instead.
+    var colour: Color?
 
     var body: some View {
         Circle()
-            .fill(tone.colour)
+            .fill(colour ?? tone.colour)
             .frame(width: size, height: size)
     }
 }
@@ -907,12 +910,16 @@ struct SidebarRailRow<Content: View>: View {
     // A pinned row wears the pin in place of its dot, so the mark costs the card no
     // width. The disc behind it is the sidebar colour, which cuts the rail line around it.
     var pinned = false
+    // Where the session's turn stands. While it is anything but idle the dot carries it,
+    // so a pinned row gives up its pin until the turn has been seen.
+    var thread: ThreadPhase = .idle
+    var threadEndedCleanly = false
     @ViewBuilder let content: Content
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             ZStack {
-                if pinned {
+                if pinned && thread == .idle {
                     Circle()
                         .fill(Theme.sidebar)
                         .frame(width: 16, height: 16)
@@ -920,8 +927,11 @@ struct SidebarRailRow<Content: View>: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(Theme.accent)
                 } else {
-                    Circle()
-                        .fill(selected ? selectedColour ?? colour : colour.opacity(0.72))
+                    ThreadNode(phase: thread,
+                               endedCleanly: threadEndedCleanly,
+                               colour: colour,
+                               restingFill: selected ? selectedColour ?? colour
+                                                     : colour.opacity(0.72))
                 }
             }
             .frame(width: RailMetrics.markerSize.width, height: RailMetrics.markerSize.height)
@@ -930,6 +940,7 @@ struct SidebarRailRow<Content: View>: View {
             .accessibilityHidden(true)
 
             content
+                .modifier(ThreadRowEffects(phase: thread, endedCleanly: threadEndedCleanly))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)

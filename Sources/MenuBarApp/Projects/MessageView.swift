@@ -16,6 +16,8 @@ struct MessageView: View, Equatable {
     // The right-click menu on the user's own prompt. Its entries are built when the
     // menu opens, so what it offers reflects the session as it is then.
     var promptMenu: (() -> [MenuEntry])?
+    // Whether this is the prompt the composer has just sent, which lifts into place.
+    var arriving = false
 
     // What the message is made of, and nothing else. The callbacks are left out on
     // purpose: each is a fresh closure on every redraw, so comparing them would say
@@ -25,6 +27,7 @@ struct MessageView: View, Equatable {
     nonisolated static func == (a: MessageView, b: MessageView) -> Bool {
         a.message == b.message && a.projectPath == b.projectPath
             && a.textScale == b.textScale && a.availableWidth == b.availableWidth
+            && a.arriving == b.arriving
     }
 
     var body: some View {
@@ -92,6 +95,10 @@ struct MessageView: View, Equatable {
             .overlay(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12,
                                             bottomTrailingRadius: 4, topTrailingRadius: 12)
                 .stroke(Theme.userMessageRing))
+            .modifier(PromptArrival(active: arriving,
+                                    outline: UnevenRoundedRectangle(
+                                        topLeadingRadius: 12, bottomLeadingRadius: 12,
+                                        bottomTrailingRadius: 4, topTrailingRadius: 12)))
             // The cap sits outside the background so it only limits how far long text
             // can wrap; the bubble itself hugs the text instead of filling the cap. It
             // grows with the text so a bubble holds about the same number of words at
