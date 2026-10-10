@@ -322,11 +322,11 @@ extension View {
     }
 }
 
-// A run of prose or a fenced block. Splitting on ``` is enough for what Claude Code emits
-// and keeps the app free of a Markdown dependency. A fence is also how a reply asks for
-// something the app draws itself, such as a chart: an agent writes fenced blocks reliably
-// and a tag it invented still reads as code, so nothing is lost when a block is not one
-// the app knows.
+// A run of prose or a fenced block. Fences are read line by line, the way Markdown reads
+// them, which keeps the app free of a Markdown dependency. A fence is also how a reply asks
+// for something the app draws itself, such as a chart: an agent writes fenced blocks
+// reliably and a tag it invented still reads as code, so nothing is lost when a block is
+// not one the app knows.
 struct MessageSegment: Identifiable, Equatable {
     let id: Int
     let text: String
@@ -340,50 +340,61 @@ struct MessageSegment: Identifiable, Equatable {
 
     static func split(_ text: String) -> [MessageSegment] {
         var segments: [MessageSegment] = []
-        let parts = text.components(separatedBy: "```")
-        for (index, part) in parts.enumerated() {
-            // Odd chunks sit between a pair of fences, so they are the code.
-            let isCode = !index.isMultiple(of: 2)
-            if !isCode {
-                var prose = part
-                // The quote markers a fence opens on would draw as empty quote lines.
-                if index < parts.count - 1, quoteDepth(lastLineOf: part) > 0 {
-                    var lines = prose.components(separatedBy: "\n")
-                    while let last = lines.last, quoteDepth(lastLineOf: last) > 0 || last.trimmed.isEmpty {
-                        lines.removeLast()
+        var lines: [String] = []
+        // Counts the fences seen so far, so a segment keeps its id as more of a streaming
+        // reply arrives after it.
+        var fences = 0
+        var opened: (fence: Fence, depth: Int, language: String?)?
+
+        for line in text.components(separatedBy: "\n") {
+            if let block = opened {
+                let body = block.depth > 0 ? unquoted(line, depth: block.depth) : line
+                if let fence = Fence(body), block.fence.isClosed(by: fence) {
+                    let code = lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+                    // An empty suggestion is how a GitHub review comment asks to delete the lines.
+                    if !code.isEmpty || block.language == suggestionLanguage {
+                        segments.append(MessageSegment(id: fences, text: code, isCode: true,
+                                                       language: block.language))
                     }
-                    prose = lines.joined(separator: "\n")
-                }
-                prose = prose.trimmed
-                if !prose.isEmpty {
-                    segments.append(MessageSegment(id: index, text: prose, isCode: false))
+                    lines = []
+                    fences += 1
+                    opened = nil
+                } else {
+                    lines.append(body)
                 }
                 continue
             }
 
-            var body = part
-            var language: String?
-            if let newline = part.firstIndex(of: "\n") {
-                let firstLine = String(part[part.startIndex..<newline]).trimmingCharacters(in: .whitespaces)
-                // A fence opens either with a bare language tag or with nothing at all.
-                if firstLine.isEmpty || !firstLine.contains(" ") {
-                    language = firstLine.isEmpty ? nil : firstLine
-                    body = String(part[part.index(after: newline)...])
+            let (depth, rest) = quoted(line)
+            guard let fence = Fence(rest), fence.opens else {
+                lines.append(line)
+                continue
+            }
+            // The quote markers a fence opens on would draw as empty quote lines.
+            if depth > 0 {
+                while let last = lines.last, String(quoted(last).rest).trimmed.isEmpty {
+                    lines.removeLast()
                 }
             }
-            let depth = quoteDepth(lastLineOf: parts[index - 1])
-            if depth > 0 {
-                body = body.components(separatedBy: "\n")
-                    .map { unquoted($0, depth: depth) }
-                    .joined(separator: "\n")
+            let prose = lines.joined(separator: "\n").trimmed
+            if !prose.isEmpty {
+                segments.append(MessageSegment(id: fences, text: prose, isCode: false))
             }
-            let code = body.trimmingCharacters(in: .newlines)
-            let isOpen = index == parts.count - 1
-            // An empty suggestion is how a GitHub review comment asks to delete the lines.
-            if !code.isEmpty || (language == suggestionLanguage && !isOpen) {
-                segments.append(MessageSegment(id: index, text: code, isCode: true,
-                                               language: language,
-                                               isOpen: isOpen))
+            lines = []
+            fences += 1
+            opened = (fence, depth, fence.info.split(whereSeparator: \.isWhitespace).first.map(String.init))
+        }
+
+        if let block = opened {
+            let code = lines.joined(separator: "\n").trimmingCharacters(in: .newlines)
+            if !code.isEmpty {
+                segments.append(MessageSegment(id: fences, text: code, isCode: true,
+                                               language: block.language, isOpen: true))
+            }
+        } else {
+            let prose = lines.joined(separator: "\n").trimmed
+            if !prose.isEmpty {
+                segments.append(MessageSegment(id: fences, text: prose, isCode: false))
             }
         }
         return segments
@@ -393,12 +404,15 @@ struct MessageSegment: Identifiable, Equatable {
 
     var isDeletion: Bool { isCode && language == Self.suggestionLanguage && text.isEmpty }
 
-    // How many quote levels the text's last line opens, when that line holds nothing but
-    // quote markers. That is the shape of the line a fence starts on inside a quote.
-    private static func quoteDepth(lastLineOf text: String) -> Int {
-        let line = text.split(separator: "\n", omittingEmptySubsequences: false).last ?? ""
-        guard line.allSatisfy({ $0 == ">" || $0 == " " || $0 == "\t" }) else { return 0 }
-        return line.filter { $0 == ">" }.count
+    // How many quote markers the line starts with, and what follows them.
+    private static func quoted(_ line: String) -> (depth: Int, rest: Substring) {
+        var rest = Substring(line)
+        var depth = 0
+        while case let trimmed = rest.drop(while: { $0 == " " || $0 == "\t" }), trimmed.first == ">" {
+            rest = trimmed.dropFirst()
+            depth += 1
+        }
+        return (depth, depth > 0 && rest.first == " " ? rest.dropFirst() : rest)
     }
 
     private static func unquoted(_ line: String, depth: Int) -> String {
@@ -409,5 +423,30 @@ struct MessageSegment: Identifiable, Equatable {
             rest = trimmed.dropFirst()
         }
         return String(rest.first == " " ? rest.dropFirst() : rest)
+    }
+}
+
+// A line of three or more backticks or tildes. A block only closes on a fence of the same
+// character that is at least as long, so a longer outer fence holds shorter ones as code.
+struct Fence {
+    let marker: String
+    let info: String
+
+    init?(_ line: some StringProtocol) {
+        let indent = line.prefix(while: { $0 == " " })
+        let content = line.dropFirst(indent.count)
+        let marker = content.prefix(while: { $0 == content.first })
+        guard indent.count <= 3, marker.count >= 3, marker.first == "`" || marker.first == "~" else {
+            return nil
+        }
+        self.marker = String(marker)
+        info = content.dropFirst(marker.count).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // Without this, inline code written as ```code``` at the start of a line would open a block.
+    var opens: Bool { marker.first == "~" || !info.contains("`") }
+
+    func isClosed(by fence: Fence) -> Bool {
+        fence.marker.first == marker.first && fence.marker.count >= marker.count && fence.info.isEmpty
     }
 }

@@ -84,7 +84,7 @@ enum SentPrompt {
     static func segments(_ text: String) -> [MessageSegment] {
         var segments: [MessageSegment] = []
         var lines: [String] = []
-        var fence: Substring?
+        var fence: Fence?
         var language: String?
 
         func append(isCode: Bool, isOpen: Bool = false, trimProse: Bool = false) {
@@ -98,25 +98,19 @@ enum SentPrompt {
         }
 
         for line in text.components(separatedBy: "\n") {
-            let indent = line.prefix(while: { $0 == " " })
-            let content = line.dropFirst(indent.count)
-            let marker = content.prefix(while: { $0 == content.first })
-            let tail = content.dropFirst(marker.count).trimmingCharacters(in: .whitespacesAndNewlines)
-            let isFence = indent.count <= 3 && marker.count >= 3
-                && (marker.first == "`" || marker.first == "~")
-
+            let lineFence = Fence(line)
             if let opened = fence {
-                if isFence, marker.first == opened.first, marker.count >= opened.count, tail.isEmpty {
+                if let lineFence, opened.isClosed(by: lineFence) {
                     append(isCode: true)
                     fence = nil
                     language = nil
                 } else {
                     lines.append(line)
                 }
-            } else if isFence, marker.first != "`" || !tail.contains("`") {
+            } else if let lineFence, lineFence.opens {
                 append(isCode: false, trimProse: true)
-                fence = marker
-                language = tail.split(whereSeparator: \.isWhitespace).first.map(String.init)
+                fence = lineFence
+                language = lineFence.info.split(whereSeparator: \.isWhitespace).first.map(String.init)
             } else {
                 lines.append(line)
             }
