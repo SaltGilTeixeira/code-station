@@ -1,62 +1,68 @@
 import SwiftUI
 
-// Where the day went: every session's turns laid on one band at the time they really
-// happened, so the shape of the day - when it started, every switch, how big the gaps
-// were - can be read without opening anything. The legend under the band carries the
-// numbers, because a band is good at sequence and bad at comparing two totals by eye.
+// A rolling day of summed session activity, with project totals and session access.
 struct DayRibbonSection: View {
     let ribbon: DayRibbon
     // Whether every session in the window has been read off disk yet. Without it the
-    // card claims an empty day for the moment between opening Home and the first scan
+    // chart claims an empty day for the moment between opening Home and the first scan
     // landing, which is the one moment the claim is most likely to be wrong.
     let scanned: Bool
     let onOpen: (UUID) -> Void
 
-    // The project the pointer picked out of the legend, which is how the same colour is
-    // proved to mean the same project everywhere on the page. Nil means show everything.
+    // Nil shows every project; a selected chip narrows the bars to that project.
     @State private var focused: String?
 
-    private static let bandHeight: CGFloat = 30
+    private static let bandHeight: CGFloat = 54
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ViewThatFits(in: .horizontal) {
-                HStack { Text("A day in parallel").font(.serif(20)); Spacer(); headline }
+                HStack {
+                    title.fixedSize()
+                    Spacer()
+                    headline.fixedSize()
+                }
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("A day in parallel").font(.serif(20))
+                    title
                     headline
                 }
             }
-            card
+            chart
             Text("Last 24 hours · Summed session time, including parallel work")
                 .font(.system(size: 10.5)).foregroundStyle(.secondary)
         }
+        .onChange(of: ribbon.legend.map(\.id)) { _, subjects in
+            if let focused, !subjects.contains(focused) { self.focused = nil }
+        }
+    }
+
+    private var title: some View {
+        Text("Your day, at a glance")
+            .font(.serif(20))
+            .accessibilityAddTraits(.isHeader)
     }
 
     private var headline: some View {
-        (Text(scanned ? DayRibbon.duration(ribbon.spent) : "Counting…")
+        (Text(scanned ? DayRibbon.duration(ribbon.spent) : "Counting session time…")
             .font(.mono(11.5, .semibold))
             .foregroundStyle(Color.primary)
-            + Text(verbatim: " of session time · \(counted(ribbon.legend.count, "project"))")
+            + Text(verbatim: scanned ? " of session time · \(counted(ribbon.legend.count, "project"))" : "")
             .font(.mono(11))
             .foregroundStyle(.tertiary))
-            .lineLimit(1)
+            .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var card: some View {
+    private var chart: some View {
         VStack(alignment: .leading, spacing: 0) {
             band
-            if !ribbon.isEmpty {
+            if scanned && !ribbon.isEmpty {
                 legend
             } else if scanned {
                 emptyNote
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 14)
-        .cardSurface(cornerRadius: 12)
+        .padding(.top, 11)
     }
 
     // MARK: - Band
@@ -70,49 +76,47 @@ struct DayRibbonSection: View {
 
     private var track: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .topLeading) {
-                dayBreak(width: geometry.size.width)
-                ForEach(ribbon.blocks) { block in
-                    RibbonBlock(block: block,
-                                axis: ribbon.axis,
-                                width: geometry.size.width,
-                                height: Self.bandHeight,
-                                dimmed: dimmed(block.subject.name),
-                                open: { onOpen(block.sessionID) })
+            let count = max(1, min(64, Int(geometry.size.width / 7)))
+            let activity = ribbon.activity(bucketCount: count, subject: focused)
+            let peak = max(activity.map(\.spent).max() ?? 0, 1)
+            HStack(alignment: .bottom, spacing: 3) {
+                ForEach(activity) { bucket in
+                    let fraction = scanned ? bucket.spent / peak : 0
+                    let bar = UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3)
+                        .fill(Theme.accent.opacity(scanned && bucket.spent > 0 ? 0.55 + fraction * 0.3 : 0.22))
+                        .frame(height: max(4, Self.bandHeight * fraction))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+                        .contentShape(Rectangle())
+                    if scanned && bucket.spent > 0 {
+                        bar
+                            .appMenu {
+                                [.searchable(bucket.sessions.map { block in
+                                    MenuItem(label: block.title, projectTint: block.subject.tint,
+                                             subtitle: block.subject.name,
+                                             handler: { onOpen(block.sessionID) })
+                                }, prompt: "Find a session", noResults: "No sessions match your search.")]
+                            }
+                            .appTooltip(activityLabel(bucket))
+                            .accessibilityLabel(activityLabel(bucket))
+                            .accessibilityHint("Shows sessions active during this time")
+                    } else {
+                        bar.accessibilityHidden(true)
+                    }
                 }
             }
-            .frame(width: geometry.size.width, height: Self.bandHeight,
-                   alignment: .topLeading)
         }
         .frame(height: Self.bandHeight)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.sunken))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .accessibilityRepresentation {
-            VStack {
-                ForEach(ribbon.blocks) { block in
-                    Button {
-                        onOpen(block.sessionID)
-                    } label: {
-                        Text("\(block.start.formatted(date: .abbreviated, time: .shortened)), \(block.subject.name), \(block.title), \(DayRibbon.duration(block.seconds))")
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Opens this session")
-                }
-            }
-        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(scanned
+            ? "Session activity over the last 24 hours. Taller bars mean more session time."
+            : "Counting session activity")
     }
 
-    // Midnight inside a rolling 24 hours, so the half of the band that belongs to
-    // yesterday is not read as part of today.
-    @ViewBuilder private func dayBreak(width: CGFloat) -> some View {
-        let midnight = Calendar.current.startOfDay(for: ribbon.axis.end)
-        if ribbon.axis.contains(midnight) {
-            let scale = width / max(ribbon.axis.duration, 1)
-            Rectangle()
-                .fill(Theme.chartGrid)
-                .frame(width: 1, height: Self.bandHeight)
-                .offset(x: midnight.timeIntervalSince(ribbon.axis.start) * scale)
-        }
+    private func activityLabel(_ bucket: DayRibbon.Activity) -> String {
+        let start = bucket.interval.start.formatted(date: .abbreviated, time: .shortened)
+        let end = bucket.interval.end.formatted(date: .omitted, time: .shortened)
+        return "\(start) - \(end), \(DayRibbon.duration(bucket.spent)) of session time, "
+            + counted(bucket.sessions.count, "session")
     }
 
     // MARK: - Legend
@@ -150,74 +154,6 @@ struct DayRibbonSection: View {
     }
 }
 
-// MARK: - Block
-
-// One stretch of one session, placed at the time it happened. It is a button because
-// what it stands for is a conversation, and the block is the shortest way back to it.
-private struct RibbonBlock: View {
-    let block: DayRibbon.Block
-    let axis: DateInterval
-    let width: CGFloat
-    let height: CGFloat
-    let dimmed: Bool
-    let open: () -> Void
-
-    // Below this a run disappears from the band entirely. Two neighbours can merge
-    // visually at this size, which is why the totals are read from the legend.
-    private static let floor: CGFloat = 2
-
-    @State private var hovering = false
-
-    private var scale: CGFloat { width / max(axis.duration, 1) }
-
-    private var span: CGFloat { max(Self.floor, block.seconds * scale) }
-
-    private var offset: CGFloat {
-        let placed = block.start.timeIntervalSince(axis.start) * scale
-        return min(max(0, placed), max(0, width - span))
-    }
-
-    var body: some View {
-        Button(action: open) {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(block.subject.tint.colour)
-                .frame(width: span, height: height)
-                .brightness(hovering && !dimmed ? 0.06 : 0)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .opacity(dimmed ? 0.16 : 1)
-        .onHover { hovering = $0 }
-        .motion(Motion.hover, value: hovering)
-        .motion(Motion.reveal, value: dimmed)
-        .appTooltip(delay: .milliseconds(120)) { tooltip }
-        .accessibilityLabel(spoken)
-        .accessibilityHint("Opens this session")
-        // Placed by layout rather than by an offset: an offset only moves the drawing,
-        // so the hint would be anchored to where the block would sit without it.
-        .padding(.leading, offset)
-    }
-
-    private var tooltip: Tooltip {
-        Tooltip(title: block.title,
-                subtitle: block.subject.name,
-                rows: [.init(label: "Spent",
-                             value: DayRibbon.duration(block.seconds)
-                                 + (block.isOpen ? " so far" : "")),
-                       .init(label: "When", value: clock)])
-    }
-
-    private var clock: String {
-        let from = block.start.formatted(date: .omitted, time: .shortened)
-        let to = block.isOpen ? "now" : block.end.formatted(date: .omitted, time: .shortened)
-        return from + " - " + to
-    }
-
-    private var spoken: String {
-        "\(block.subject.name), \(block.title), \(clock), \(DayRibbon.duration(block.seconds))"
-    }
-}
-
 // MARK: - Legend chip
 
 private struct RibbonChip: View {
@@ -251,104 +187,40 @@ private struct RibbonChip: View {
         .motion(Motion.hover, value: hovering)
         .motion(Motion.reveal, value: dimmed)
         .accessibilityLabel("\(total.subject.name), \(DayRibbon.duration(total.spent))")
-        .accessibilityHint("Dims every other project on the band")
+        .accessibilityValue(dimmed ? "Not selected" : "Shown")
+        .accessibilityHint("Toggles the project filter for the activity bars")
     }
 }
 
 // MARK: - Axis
 
-// The hours under a band. Labels are centred on their tick and pulled back inside the
-// band at either end, so the first and last readings are not half cut off by the card.
 private struct RibbonAxis: View {
     let axis: DateInterval
-
-    // Hours between readings.
-    private static let step = 3
-    private static let height: CGFloat = 15
-    private static let labelWidth: CGFloat = 72
-    // Room the NOW stamp needs at the right edge. A tick whose reading would run into
-    // it is dropped: NOW is the one of the two with something to say.
-    private static let nowRoom: CGFloat = 58
-
-    private struct Tick: Identifiable {
-        let date: Date
-        let label: String
-        let isDayBreak: Bool
-
-        var id: Date { date }
-    }
 
     var body: some View {
         GeometryReader { geometry in
             let width = geometry.size.width
-            let scale = width / max(axis.duration, 1)
+            let divisions = width >= 650 ? 6 : 3
             ZStack(alignment: .topLeading) {
-                ForEach(ticks) { tick in
-                    let position = tick.date.timeIntervalSince(axis.start) * scale
-                    let crowded = position > width - Self.nowRoom
-                    if tick.isDayBreak {
-                        Rectangle()
-                            .fill(Theme.chartGrid)
-                            .frame(width: 1, height: Self.height)
-                            .offset(x: position)
-                    }
-                    if !crowded {
-                        Text(tick.label)
-                            .font(.mono(9.5))
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
-                            .frame(width: Self.labelWidth, alignment: .center)
-                            .offset(x: clamp(position - Self.labelWidth / 2, in: width))
+                Text(axis.start.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ForEach(1..<divisions, id: \.self) { index in
+                    let position = width * Double(index) / Double(divisions)
+                    let date = axis.start.addingTimeInterval(axis.duration * Double(index) / Double(divisions))
+                    if position > 145 && position < width - 55 {
+                        Text(date.formatted(date: .omitted, time: .shortened))
+                            .frame(width: 72)
+                            .offset(x: position - 36)
                     }
                 }
-                Text("NOW")
-                    .font(.mono(9.5))
-                    .kerning(0.6)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: Self.labelWidth, alignment: .trailing)
-                    .offset(x: max(0, width - Self.labelWidth))
+                Text("Now")
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .frame(width: width, height: Self.height, alignment: .topLeading)
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
         }
-        .frame(height: Self.height)
+        .frame(height: 15)
         .accessibilityHidden(true)
-    }
-
-    private func clamp(_ x: CGFloat, in width: CGFloat) -> CGFloat {
-        min(max(0, x), max(0, width - Self.labelWidth))
-    }
-
-    private var ticks: [Tick] {
-        let calendar = Calendar.current
-        var result: [Tick] = []
-        var cursor = calendar.date(bySetting: .minute, value: 0, of: axis.start)
-            .map { calendar.date(bySetting: .second, value: 0, of: $0) ?? $0 }
-            ?? axis.start
-        while cursor <= axis.start { cursor.addTimeInterval(3_600) }
-        while calendar.component(.hour, from: cursor) % Self.step != 0 {
-            cursor.addTimeInterval(3_600)
-        }
-        while cursor < axis.end {
-            // Midnight is named by its date rather than by "00:00", which is the only
-            // thing saying which half of a rolling day a block sits in.
-            let midnight = calendar.component(.hour, from: cursor) == 0
-            result.append(Tick(date: cursor,
-                               label: midnight
-                                   ? cursor.formatted(.dateTime.weekday(.abbreviated).day()).uppercased()
-                                   : cursor.formatted(date: .omitted, time: .shortened),
-                               isDayBreak: midnight))
-            cursor.addTimeInterval(TimeInterval(Self.step) * 3_600)
-        }
-        // A band that opens mid-hour carries no reading at its left edge, which is where
-        // the day starts being read from. It only gets one when there is room: a stamp
-        // pressed up against the first tick is two readings and neither is legible.
-        let room = TimeInterval(Self.step) * 3_600
-        if result.first.map({ $0.date.timeIntervalSince(axis.start) >= room }) ?? true {
-            result.insert(Tick(date: axis.start,
-                               label: axis.start.formatted(date: .omitted, time: .shortened),
-                               isDayBreak: false),
-                          at: 0)
-        }
-        return result
     }
 }

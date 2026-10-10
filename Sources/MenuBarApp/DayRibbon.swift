@@ -112,6 +112,37 @@ struct DayRibbon {
                          now: now)
     }
 
+    struct Activity: Identifiable {
+        let interval: DateInterval
+        let spent: TimeInterval
+        let sessions: [Block]
+
+        var id: Date { interval.start }
+    }
+
+    // Equal time buckets preserve gaps and add parallel sessions instead of letting
+    // the last session drawn hide the work underneath it.
+    func activity(bucketCount: Int = 64, subject: String? = nil) -> [Activity] {
+        guard bucketCount > 0, axis.duration > 0 else { return [] }
+        let step = axis.duration / Double(bucketCount)
+        let matching = blocks.filter { subject == nil || $0.subject.name == subject }
+        return (0..<bucketCount).map { index in
+            let start = axis.start.addingTimeInterval(Double(index) * step)
+            let end = axis.start.addingTimeInterval(Double(index + 1) * step)
+            var spent: TimeInterval = 0
+            var sessions: [Block] = []
+            var seen: Set<UUID> = []
+            for block in matching {
+                let overlap = min(end, block.end).timeIntervalSince(max(start, block.start))
+                guard overlap > 0 else { continue }
+                spent += overlap
+                if seen.insert(block.sessionID).inserted { sessions.append(block) }
+            }
+            return Activity(interval: DateInterval(start: start, end: end),
+                            spent: spent, sessions: sessions)
+        }
+    }
+
     // "2h 33m", "13m", "1h". Seconds are left out: this is a day being read, not a run
     // being watched, and a turn worth noticing on the band lasted minutes.
     static func duration(_ seconds: TimeInterval) -> String {

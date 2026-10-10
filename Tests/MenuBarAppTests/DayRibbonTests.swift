@@ -224,6 +224,56 @@ struct DayRibbonTests {
         #expect(ribbon.spent == 3_600)
     }
 
+    @Test func activityAddsParallelWorkAndPreservesGaps() {
+        let first = session(project: "First")
+        let second = session(project: "Second")
+        let ribbon = DayRibbon.build([first, second], spans: { id in
+            id == first.id
+                ? [TimeSpan(start: at(9, 30), end: at(10, 30))]
+                : [TimeSpan(start: at(9, 45), end: at(10, 15))]
+        }, now: at(24))
+
+        let activity = ribbon.activity(bucketCount: 24)
+        #expect(activity.count == 24)
+        #expect(activity[9].spent == 2_700)
+        #expect(activity[10].spent == 2_700)
+        #expect(activity[9].sessions.count == 2)
+        #expect(activity[8].spent == 0)
+        #expect(activity[11].sessions.isEmpty)
+        #expect(activity.reduce(0) { $0 + $1.spent } == ribbon.spent)
+        #expect(ribbon.activity(bucketCount: 24, subject: "First")[9].spent == 1_800)
+    }
+
+    @Test func activityCountsEachSessionOncePerBucketAndClipsAtEdges() {
+        let work = session(project: "First")
+        let ribbon = DayRibbon.build([work], spans: { _ in
+            [TimeSpan(start: at(-1), end: at(0, 10)),
+             TimeSpan(start: at(0, 20), end: at(0, 30)),
+             TimeSpan(start: at(23, 45), end: at(25))]
+        }, now: at(24))
+
+        let activity = ribbon.activity(bucketCount: 24)
+        #expect(activity[0].spent == 1_200)
+        #expect(activity[0].sessions.count == 1)
+        #expect(activity[23].spent == 900)
+        #expect(activity.last?.interval.end == ribbon.now)
+        #expect(activity.reduce(0) { $0 + $1.spent } == ribbon.spent)
+        #expect(ribbon.activity(bucketCount: 0).isEmpty)
+        #expect(ribbon.activity(subject: "Missing").allSatisfy { $0.spent == 0 })
+    }
+
+    @Test func activityIncludesRunningSessionsAndAnEmptyDay() {
+        let work = session(project: "First", open: true)
+        let ribbon = DayRibbon.build([work], spans: { _ in
+            [TimeSpan(start: at(23, 30), end: at(23, 35))]
+        }, now: at(24))
+        #expect(ribbon.activity(bucketCount: 24)[23].spent == 1_800)
+
+        let empty = DayRibbon.build([], spans: { _ in [] }, now: at(24)).activity()
+        #expect(empty.count == 64)
+        #expect(empty.allSatisfy { $0.spent == 0 && $0.sessions.isEmpty })
+    }
+
     @Test func readsDurationsInHoursAndMinutes() {
         #expect(DayRibbon.duration(0) == "0m")
         #expect(DayRibbon.duration(20) == "1m")
