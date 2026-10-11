@@ -70,4 +70,31 @@ struct WarningContrastTests {
             }
         }
     }
+
+    // The shield on the composer bar says how far the agent is trusted by its colour, and
+    // each level's words sit on a tint of that same colour. Every level has to read in
+    // both appearances, the new blue for plan only among them.
+    @Test func everyTrustLevelIsReadableInBothAppearances() throws {
+        for appearance in try appearances() {
+            let card = try swatch(Theme.card, in: appearance)
+            let field = try swatch(Theme.field, in: appearance).over(card)
+
+            let pairs: [(String, Swatch, Swatch)] = [
+                ("every step", try swatch(Theme.addition, in: appearance),
+                 try swatch(Theme.addition, in: appearance).faded(to: 0.14).over(card)),
+                ("risky only", try swatch(Color(nsColor: .labelColor), in: appearance), field),
+                ("allow edits", try swatch(Theme.attentionText, in: appearance),
+                 try swatch(Theme.attention, in: appearance).faded(to: 0.18).over(card)),
+                ("plan only", try swatch(Theme.plan, in: appearance),
+                 try swatch(Theme.plan, in: appearance).faded(to: 0.14).over(card)),
+                ("full access", try swatch(Theme.warningText, in: appearance),
+                 try swatch(Theme.deletion, in: appearance).faded(to: 0.14).over(card))
+            ]
+
+            for (part, ink, background) in pairs {
+                #expect(ink.contrast(against: background) >= 4.5,
+                        "\(part) on \(appearance.name.rawValue)")
+            }
+        }
+    }
 }

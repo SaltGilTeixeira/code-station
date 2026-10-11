@@ -2,212 +2,302 @@ import AppKit
 import Foundation
 import SwiftUI
 
-// The shortcuts available to a project, docked at the end of the composer's own row
-// rather than on a strip of their own. They belong there because running the tests for
-// what was just written is the next thing that happens as much as sending another prompt
-// is. A command run here uses this session's worktree, so the tests it runs are the tests
-// for the branch this session is on.
+// The project's commands, behind one Run button at the end of the composer's own row.
+// They belong there because running the tests for what was just written is the next
+// thing that happens as much as sending another prompt is. A command run here uses this
+// session's worktree, so the tests it runs are the tests for the branch it is on.
 //
-// Every checkout's shortcuts are here at once. A session with several of them tints each
-// chip with its project, rather than making the reader switch, since a command saved
-// against one project always runs in that project's checkout anyway.
-struct SessionShortcutChips: View {
+// The main half runs again whatever this session ran last, which is the command most
+// worth a second run. The other half opens every command as a card, each saying how its
+// last run went, so a failure is visible without opening anything.
+//
+// Every checkout's commands are here at once. A session with several of them marks each
+// card with its project, since a command saved against one project always runs in that
+// project's checkout anyway.
+struct SessionRunButton: View {
     @Environment(ShortcutStore.self) private var shortcuts
     @Environment(ProjectStore.self) private var store
 
     let session: ChatSession
     let edit: (ShortcutEditorRequest) -> Void
 
-    // The width the rest of the run-choices row left for the commands, which is what the
-    // fit is decided against.
-    @State private var rowWidth: CGFloat = 0
+    @State private var listOpen = false
+    // The card the arrow keys are on, counted from the top of the list.
+    @State private var highlighted = 0
+    @State private var buttonAnchor = FrameAnchor()
+    @State private var listAnchor = FrameAnchor()
+    @State private var listMonitor = CommandListMonitor()
 
     private var scope: ShortcutScope { .session(session.id) }
 
     var body: some View {
-        // The strip is the only part of this that stretches, so it is handed the whole
-        // of what the rest of the row left and the fit is decided against that. Anything
-        // else flexible beside it - a spacer, say - would take a share of that width and
-        // leave the chips squeezed into less room than they were measured for.
-        HStack(spacing: ShortcutChipFit.gap) {
-            strip
-
-            // Outside the strip: it makes something new rather than being one of the
-            // saved commands, and it can never be the control that is counted away.
-            newButton
+        let commands = commands
+        if let current = current(in: commands) {
+            splitButton(current, count: commands.count)
+                .background(FrameAnchorView(anchor: buttonAnchor))
+                .overlay(alignment: .topTrailing) {
+                    list(commands, current: current)
+                        .alignmentGuide(.top) { $0[.bottom] + 10 }
+                }
+                .background(keyShortcuts(current: current))
+                .onChange(of: listOpen) { _, open in
+                    open ? startListening() : listMonitor.stop()
+                }
+                .onDisappear { listMonitor.stop() }
+        } else {
+            saveButton
         }
-        .background(GeometryReader { geometry in
-            Color.clear.preference(key: ShortcutRowWidthKey.self, value: geometry.size.width)
-        })
-        .onPreferenceChange(ShortcutRowWidthKey.self) { rowWidth = $0 }
     }
 
-    // As many whole chips as the row has room for, and one count chip standing for the
-    // rest. Anything the fit could not place overflows the leading edge, so that is the
-    // edge the strip clips; the other three stay open so the hover lift still has its
-    // room. Clipping nowhere at all is what used to paint chips across the sidebar.
-    private var strip: some View {
-        let fit = fit
-        return HStack(spacing: ShortcutChipFit.gap) {
-            ForEach(fit.visible) { placement in
-                if let entry = checkout(with: placement.projectID) {
-                    chip(placement.shortcut, in: entry)
+    // MARK: - The button
+
+    private func splitButton(_ current: Command, count: Int) -> some View {
+        HStack(spacing: 0) {
+            RunHalf(name: current.shortcut.name, state: shortcuts.state(current.run)) {
+                activate(current)
+            }
+            .appContextMenu { commandMenu(current) }
+            .appTooltip {
+                Tooltip(title: shortcuts.state(current.run).isActive
+                            ? "Show what \(current.shortcut.name) is printing"
+                            : "Run \(current.shortcut.name) (⌘R)",
+                        subtitle: current.shortcut.text)
+            }
+
+            Rectangle()
+                .fill(Color.white.opacity(0.18))
+                .frame(width: 1, height: 30)
+
+            ListHalf(count: count, open: listOpen) { toggleList() }
+                .appTooltip("Every command (⇧⌘R)")
+        }
+        .fixedSize()
+    }
+
+    // A project with nothing saved yet offers to save its first command where the Run
+    // button would be, so the place the commands go is never a dead end.
+    private var saveButton: some View {
+        BarPill(fill: Theme.card) {
+            HStack(spacing: 6) {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .bold))
+                Text("Save a command")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(Theme.accent)
+        }
+        .overlay(Capsule().stroke(Theme.border))
+        .appMenu(edge: .top) { newMenu }
+        .appTooltip("Save a command for this project")
+    }
+
+    // MARK: - The list
+
+    private func list(_ commands: [Command], current: Command) -> some View {
+        let rows = rows(commands)
+        return VStack(alignment: .trailing, spacing: 6) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                if listOpen {
+                    card(row, highlighted: highlighted == index)
+                        .transition(rise(order: rows.count - 1 - index))
                 }
             }
-            if !fit.hidden.isEmpty {
-                countChip(fit.hidden)
+        }
+        .frame(width: 340, alignment: .bottomTrailing)
+        .background(FrameAnchorView(anchor: listAnchor))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Commands")
+    }
+
+    @ViewBuilder private func card(_ row: Row, highlighted: Bool) -> some View {
+        switch row {
+        case .new:
+            CommandCard(icon: "plus", name: "Save a new command",
+                        detail: .plain("Name it and say what it runs"),
+                        tint: nil, dashed: true, highlighted: highlighted) {
+                closeList()
+                edit(blankRequest)
+            }
+        case .saveLast(let command):
+            CommandCard(icon: "square.and.arrow.down", name: "Save the agent's last command",
+                        detail: .command(command),
+                        tint: nil, dashed: true, highlighted: highlighted) {
+                closeList()
+                var request = blankRequest
+                request.text = command
+                edit(request)
+            }
+        case .command(let command):
+            CommandCard(icon: command.shortcut.glyph ?? "terminal",
+                        name: command.shortcut.name,
+                        detail: .outcome(summary(of: command)),
+                        tint: command.tint,
+                        dashed: false, highlighted: highlighted) {
+                closeList()
+                activate(command)
+            }
+            .appContextMenu { commandMenu(command) }
+        }
+    }
+
+    // Cards rise from the button nearest first, a beat apart, and all drop together. No
+    // scale: a card carries AppKit views that cannot be laid out under one.
+    private func rise(order: Int) -> AnyTransition {
+        .asymmetric(
+            insertion: .offset(y: 14).combined(with: .opacity)
+                .animation(Motion.pop.delay(Double(order) * 0.038)),
+            removal: .opacity.animation(Motion.leave))
+    }
+
+    private enum Row: Identifiable {
+        case new
+        case saveLast(String)
+        case command(Command)
+
+        var id: String {
+            switch self {
+            case .new: "new"
+            case .saveLast: "save-last"
+            case .command(let command): command.id.uuidString
             }
         }
-        // The commands sit against the right of the strip, so the control that saves
-        // another one is always beside the last one saved.
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .mask { Rectangle().padding(.trailing, -10).padding(.vertical, -10) }
     }
 
-    private struct Fit {
-        var visible: [ShortcutPlacement] = []
-        var hidden: [ShortcutPlacement] = []
-    }
-
-    private var stripWidth: CGFloat? {
-        guard rowWidth > 0 else { return nil }
-        return max(0, rowWidth - ShortcutChipFit.newButtonWidth - ShortcutChipFit.gap)
-    }
-
-    private var fit: Fit {
-        // Nothing is placed until the row has been measured, so a chip is never laid out
-        // against a width the row turns out not to have.
-        guard let stripWidth else { return Fit() }
-        let entries = checkouts
-        let ordered = ShortcutChipFit.ordered(placements) { state(of: $0, in: entries) }
-        let widths = ordered.map { placement in
-            ShortcutChipFit.chipWidth(name: placement.shortcut.name,
-                                      glyph: placement.shortcut.glyph,
-                                      state: state(of: placement, in: entries),
-                                      tinted: entries.count > 1)
+    private func rows(_ commands: [Command]) -> [Row] {
+        var rows: [Row] = [.new]
+        // The command the agent just ran is the one most worth keeping, and it has
+        // already been typed once.
+        if let last = SessionShortcuts.lastAgentCommand(in: session),
+           !commands.contains(where: { $0.shortcut.text == last }) {
+            rows.append(.saveLast(last))
         }
-        let shown = ShortcutChipFit.shown(
-            widths: widths,
-            countWidth: ShortcutChipFit.countWidth(total: ordered.count, badged: true),
-            available: stripWidth)
-        return Fit(visible: Array(ordered.prefix(shown)),
-                   hidden: Array(ordered.dropFirst(shown)))
+        rows += commands.map { .command($0) }
+        return rows
     }
 
-    // MARK: - Chips
-
-    private func chip(_ shortcut: Shortcut, in entry: Checkout) -> some View {
-        let run = run(for: shortcut, in: entry)
-        return ShortcutChip(
-            shortcut: shortcut,
-            state: shortcuts.state(run),
-            tint: checkouts.count > 1 ? Theme.projectTint(for: entry.project?.name ?? "") : nil,
-            open: shortcuts.output(for: scope) == run,
-            activate: { activate(run) }
-        )
-        .appContextMenu {
-            var entries: [MenuEntry] = [
-                shortcuts.state(run).isActive
-                    ? .item("Stop", action: { toggle(run) })
-                    : .item("Run", action: { toggle(run) }),
-                .item("Show output", action: { shortcuts.showOutput(run, for: scope) }),
-                .item("Edit", action: {
-                    edit(ShortcutEditorRequest(shortcut: shortcut,
-                                               projectID: entry.checkout.projectID,
-                                               projectName: entry.project?.name))
-                })
-            ]
-            if !shortcut.availableInAllProjects {
-                entries.append(.separator)
-                entries.append(.item("Remove", kind: .destructive, action: {
-                    shortcuts.remove(shortcut.id)
-                }))
-            }
-            return entries
-        }
+    private func summary(of command: Command) -> CommandRunSummary {
+        CommandRunSummary(state: shortcuts.state(command.run),
+                          duration: shortcuts.duration(command.run),
+                          started: shortcuts.hasStarted(command.run))
     }
 
-    // MARK: - What did not fit
+    // MARK: - Opening and closing
 
-    // One chip standing for the commands the row had no room for. It is the same shape
-    // as a chip with secondary text, so it reads as a container rather than as another
-    // command, and it carries the state of anything running or failed behind it so a run
-    // is never silently out of sight.
-    private func countChip(_ hidden: [ShortcutPlacement]) -> some View {
-        let entries = checkouts
-        let states = hidden.map { state(of: $0, in: entries) }
-        return ShortcutCountChip(
-            count: hidden.count,
-            badge: states.contains(where: \.isActive) ? Theme.dotOn
-                : states.contains(where: \.isFailure) ? Theme.deletion : nil,
-            menu: { overflowMenu(hidden, in: entries) })
+    private func toggleList() {
+        listOpen ? closeList() : openList()
     }
 
-    private func overflowMenu(_ hidden: [ShortcutPlacement],
-                              in entries: [Checkout]) -> [MenuEntry] {
-        let tinted = entries.count > 1
-        var menu: [MenuEntry] = hidden.compactMap { placement in
-            guard let entry = entries.first(where: {
-                $0.checkout.projectID == placement.projectID
-            }) else { return nil }
-            let shortcut = placement.shortcut
-            let run = run(for: shortcut, in: entry)
-            let state = shortcuts.state(run)
-            // Picking one runs it, which sorts it to the front and so brings it back
-            // into the row it was just counted out of.
-            return .item(shortcut.name,
-                         projectTint: tinted
-                            ? Theme.projectTint(for: entry.project?.name ?? "") : nil,
-                         icon: shortcut.glyph,
-                         subtitle: shortcut.text,
-                         monospacedSubtitle: true,
-                         detail: Self.detail(for: state),
-                         detailColour: Self.detailColour(for: state),
-                         action: { toggle(run) })
-        }
-        // Never a dead end: the place the commands went is also a place to save another.
-        menu.append(.separator)
-        menu.append(.item("New shortcut…", icon: "plus", action: { edit(blankRequest) }))
-        return menu
+    private func openList() {
+        let commands = commands
+        let rows = rows(commands)
+        let current = current(in: commands)?.id
+        highlighted = rows.firstIndex {
+            if case .command(let command) = $0 { return command.id == current }
+            return false
+        } ?? 0
+        listOpen = true
     }
 
-    private static func detail(for state: ShortcutStore.State) -> String? {
-        switch state {
-        case .stopped: nil
-        case .running: "running"
-        case .finished: "exit 0"
-        case .failed(_, let code, _): code.map { "exit \($0)" } ?? "failed"
+    private func closeList() {
+        listOpen = false
+    }
+
+    // The arrow keys and Return belong to the list while it is open, even with the cursor
+    // still in the prompt, and Escape closes it before it can stop the turn. A click
+    // anywhere else puts it away, the way a menu goes.
+    private func startListening() {
+        listMonitor.start(
+            anchor: buttonAnchor,
+            regions: [buttonAnchor, listAnchor],
+            key: { key in
+                let rows = rows(self.commands)
+                switch key {
+                case .up: highlighted = max(0, highlighted - 1)
+                case .down: highlighted = min(rows.count - 1, highlighted + 1)
+                case .choose:
+                    guard rows.indices.contains(highlighted) else { return }
+                    choose(rows[highlighted])
+                case .close: closeList()
+                }
+            },
+            outside: { closeList() })
+    }
+
+    private func choose(_ row: Row) {
+        closeList()
+        switch row {
+        case .new: edit(blankRequest)
+        case .saveLast(let command):
+            var request = blankRequest
+            request.text = command
+            edit(request)
+        case .command(let command): activate(command)
         }
     }
 
-    private static func detailColour(for state: ShortcutStore.State) -> Color? {
-        switch state {
-        case .running: Theme.dotOn
-        case .failed: Theme.deletion
-        case .finished, .stopped: nil
+    // MARK: - Keys
+
+    // ⌘R runs the last command again and ⇧⌘R opens the list.
+    private func keyShortcuts(current: Command) -> some View {
+        ZStack {
+            Button("") { activate(current) }
+                .keyboardShortcut("r", modifiers: .command)
+            Button("") { toggleList() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+        }
+        .buttonStyle(.plain)
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
+
+    // MARK: - Running
+
+    // While a command runs, its button is the way back to what it is printing, not the
+    // way to kill it. Stopping is the rarer of the two and stays in its menu and in the
+    // drawer the output opens in.
+    private func activate(_ command: Command) {
+        if shortcuts.state(command.run).isActive {
+            shortcuts.showOutput(command.run, for: scope)
+        } else {
+            shortcuts.start(command.run, for: scope)
+            shortcuts.showOutput(command.run, for: scope)
         }
     }
 
-    // Dashed and wordless, so the one control that makes something new neither reads as
-    // another saved command nor takes the room of one.
-    private var newButton: some View {
-        Image(systemName: "plus")
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(.secondary)
-            .frame(width: ShortcutChipFit.newButtonWidth, height: 22)
-            .overlay(RoundedRectangle(cornerRadius: 7)
-                .strokeBorder(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
-            .appMenu { newMenu }
-            .appTooltip("Save a command for this project")
-            .accessibilityLabel("New shortcut")
+    private func toggle(_ command: Command) {
+        if shortcuts.state(command.run).isActive {
+            shortcuts.stop(command.run)
+        } else {
+            activate(command)
+        }
+    }
+
+    private func commandMenu(_ command: Command) -> [MenuEntry] {
+        var entries: [MenuEntry] = [
+            shortcuts.state(command.run).isActive
+                ? .item("Stop", action: { toggle(command) })
+                : .item("Run", action: { toggle(command) }),
+            .item("Show output", action: { shortcuts.showOutput(command.run, for: scope) }),
+            .item("Edit", action: {
+                edit(ShortcutEditorRequest(shortcut: command.shortcut,
+                                           projectID: command.checkout.projectID,
+                                           projectName: command.projectName))
+            })
+        ]
+        if !command.shortcut.availableInAllProjects {
+            entries.append(.separator)
+            entries.append(.item("Remove", kind: .destructive, action: {
+                shortcuts.remove(command.shortcut.id)
+            }))
+        }
+        return entries
     }
 
     private var newMenu: [MenuEntry] {
         var entries: [MenuEntry] = [
             .item("New command…", action: { edit(blankRequest) })
         ]
-        // The command the agent just ran is the one most worth keeping, and it has
-        // already been typed once.
         if let command = SessionShortcuts.lastAgentCommand(in: session) {
             entries.append(.item("Save last terminal command",
                                  subtitle: command,
@@ -227,376 +317,457 @@ struct SessionShortcutChips: View {
                               projectName: store.project(session.projectID)?.name)
     }
 
-    // MARK: - The checkouts behind the chips
+    // MARK: - The commands
 
-    private struct Checkout {
+    private struct Command: Identifiable {
+        let shortcut: Shortcut
         let checkout: SessionProject
-        let project: Project?
+        let projectName: String?
+        let run: ShortcutRun
+        let tint: Theme.ProjectTint?
+
+        var id: Shortcut.ID { shortcut.id }
     }
 
-    private var checkouts: [Checkout] {
-        store.checkoutProjects(for: session).map {
-            Checkout(checkout: $0, project: store.project($0.projectID))
+    private var commands: [Command] {
+        let checkouts = store.checkoutProjects(for: session)
+        let tinted = checkouts.count > 1
+        return shortcuts.shortcuts(for: checkouts.map(\.projectID)).compactMap { placement in
+            guard let checkout = checkouts.first(where: { $0.projectID == placement.projectID })
+            else { return nil }
+            let project = store.project(checkout.projectID)
+            let shortcut = placement.shortcut
+            return Command(
+                shortcut: shortcut,
+                checkout: checkout,
+                projectName: project?.name,
+                run: ShortcutRun(shortcut.id,
+                                 in: shortcut.directory(projectPath: project?.path,
+                                                        workspacePath: checkout.worktreePath)),
+                tint: tinted ? Theme.projectTint(for: project?.name ?? "") : nil)
         }
     }
 
-    private var placements: [ShortcutPlacement] {
-        shortcuts.shortcuts(for: checkouts.map(\.checkout.projectID))
-    }
-
-    private func checkout(with projectID: UUID) -> Checkout? {
-        checkouts.first { $0.checkout.projectID == projectID }
-    }
-
-    private func state(of placement: ShortcutPlacement,
-                       in entries: [Checkout]) -> ShortcutStore.State {
-        guard let entry = entries.first(where: {
-            $0.checkout.projectID == placement.projectID
-        }) else { return .stopped }
-        return shortcuts.state(run(for: placement.shortcut, in: entry))
-    }
-
-    private func run(for shortcut: Shortcut, in entry: Checkout) -> ShortcutRun {
-        ShortcutRun(shortcut.id,
-                    in: shortcut.directory(projectPath: entry.project?.path,
-                                           workspacePath: entry.checkout.worktreePath))
-    }
-
-    // While a command runs, the chip is the way back to what it is printing, not the
-    // way to kill it. Stopping is the rarer of the two and stays in the chip's menu and
-    // in the drawer the output opens in.
-    private func activate(_ run: ShortcutRun) {
-        if shortcuts.state(run).isActive {
-            shortcuts.showOutput(run, for: scope)
-        } else {
-            toggle(run)
-        }
-    }
-
-    private func toggle(_ run: ShortcutRun) {
-        if shortcuts.state(run).isActive {
-            shortcuts.stop(run)
-        } else {
-            shortcuts.start(run)
-            shortcuts.showOutput(run, for: scope)
-        }
+    // What Run offers before this session has run anything is the first command, the
+    // one the project put at the top of its list.
+    private func current(in commands: [Command]) -> Command? {
+        let last = shortcuts.lastStarted(for: scope)
+        return commands.first { $0.id == last } ?? commands.first
     }
 }
 
-// MARK: - One chip
+// MARK: - The two halves
 
-// A saved command as one small control: click runs it, and click it again while it runs
-// to go back to the output it is printing. It carries the icon it was given, its name,
-// and a single glyph for how the last run went - a dot, a tick, an exclamation - because
-// a row of these shares a line with everything else the session has to say, and anything
-// more makes that line unreadable. The timing and the output are in the drawer, which
-// opens on its own the moment a run starts.
-struct ShortcutChip: View {
-    let shortcut: Shortcut
+private struct RunHalf: View {
+    let name: String
     let state: ShortcutStore.State
-    // Set only for a session spanning several checkouts, where the checkout this command
-    // runs in matters and the name alone does not say.
-    let tint: Theme.ProjectTint?
-    let open: Bool
-    let activate: () -> Void
+    let action: () -> Void
 
     @State private var hovering = false
 
-    var body: some View {
-        Button(action: activate) {
-            ZStack {
-                HStack(spacing: 6) {
-                    if let tint { ProjectDot(tint: tint, size: 6) }
-                    if let glyph = shortcut.glyph {
-                        Image(systemName: glyph)
-                            .font(.system(size: 9.5, weight: .semibold))
-                            .foregroundStyle(Theme.accent)
-                    }
-                    Text(shortcut.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        // The name takes exactly the width the fit measured it at, capped
-                        // so that one long name cannot take the room of four commands. A
-                        // name left free to give or take would let the row share its width
-                        // out evenly and starve the widest chip into an ellipsis; this way
-                        // a chip is the size it was counted as or it is not in the row at
-                        // all. The whole name stays in the tooltip and in the menu.
-                        .frame(width: ShortcutChipFit.nameWidth(shortcut.name),
-                               alignment: .leading)
-                    stateGlyph
-                }
-                .opacity(offeringShow ? 0 : 1)
+    private var running: Bool { state.isActive }
 
-                Text("Show")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.accent)
-                    .lineLimit(1)
-                    .opacity(offeringShow ? 1 : 0)
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                ZStack {
+                    if running {
+                        RunSpinner().transition(.opacity)
+                    } else {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .transition(.opacity)
+                    }
+                }
+                .frame(width: 12, height: 12)
+                RollingText(running ? name : "Run \(name)",
+                            font: .system(size: 12.5, weight: .semibold))
+                if case .running(let since) = state {
+                    TimelineView(.periodic(from: since, by: 0.1)) { context in
+                        Text(CommandRunSummary.elapsed(context.date.timeIntervalSince(since)))
+                            .font(.system(size: 12))
+                            .monospacedDigit()
+                            .opacity(0.7)
+                    }
+                    .transition(.opacity)
+                }
+                KeyHint("⌘R", onFill: true)
             }
-            .padding(.horizontal, 9)
-            .frame(height: 22)
-            .surface(backgroundColour, cornerRadius: 7, border: borderColour)
-            .shadow(color: emphasisColour.opacity(hovering ? 0.32 : 0),
-                    radius: hovering ? 6 : 0)
-            .contentShape(RoundedRectangle(cornerRadius: 7))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .padding(.leading, 11)
+            .padding(.trailing, 10)
+            .frame(height: 30)
+            .background(Theme.accentFill.brightness(hovering ? 0.06 : 0))
+            .overlay(alignment: .bottom) {
+                if running { RunSweep().transition(.opacity) }
+            }
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 9, bottomLeadingRadius: 9))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .fixedSize()
         .hoverLift(hovering)
         .onHover { hovering = $0 }
-        .accessibilityLabel(state.isActive ? "Show the output of \(shortcut.name)"
-            : "Run \(shortcut.name)")
-        .appTooltip {
-            Tooltip(title: tooltip, subtitle: shortcut.text,
-                    note: shortcut.availableInAllProjects ? "Available in all projects" : nil)
-        }
-    }
-
-    @ViewBuilder private var stateGlyph: some View {
-        switch state {
-        case .stopped:
-            EmptyView()
-        case .running:
-            Circle()
-                .fill(Theme.dotOn)
-                .frame(width: 6, height: 6)
-        case .finished:
-            Image(systemName: "checkmark")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(Theme.addition)
-        case .failed:
-            Image(systemName: "exclamationmark")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(Theme.deletion)
-        }
-    }
-
-    private var tooltip: String {
-        return switch state {
-        case .stopped: "Run \(shortcut.name)"
-        case .running(let since):
-            "Running for \(RelativeTime.duration(since: since)). Click to see its output."
-        case .finished(let at): "Finished \(RelativeTime.duration(since: at)) ago"
-        case .failed(_, let status, let at):
-            status.map { "Exited with code \($0) \(RelativeTime.duration(since: at)) ago" }
-                ?? "Failed \(RelativeTime.duration(since: at)) ago"
-        }
-    }
-
-    private var borderColour: Color {
-        if hovering { return emphasisColour.opacity(0.75) }
-        if state.isFailure { return emphasisColour.opacity(0.55) }
-        if open || state.isActive { return Theme.accent.opacity(0.55) }
-        return Theme.border
-    }
-
-    private var backgroundColour: Color {
-        hovering ? emphasisColour.opacity(0.1) : Theme.card
-    }
-
-    private var emphasisColour: Color {
-        state.isFailure ? Theme.deletion : Theme.accent
-    }
-
-    private var offeringShow: Bool {
-        hovering && state.isActive
+        .motion(Motion.hover, value: hovering)
+        .motion(Motion.control, value: running)
+        .accessibilityLabel(running ? "Show the output of \(name)" : "Run \(name)")
     }
 }
 
-// MARK: - The count chip
-
-// The commands the row had no room for, as one control. It is the chip shape again but
-// in secondary type, so it reads as a container rather than as another command, and it
-// opens on the list it stands for.
-struct ShortcutCountChip: View {
+private struct ListHalf: View {
     let count: Int
-    // The state of whatever is hidden behind it, when that state is worth seeing from
-    // the row: green while one of them runs, red when one of them failed.
-    let badge: Color?
-    let menu: () -> [MenuEntry]
+    let open: Bool
+    let action: () -> Void
 
     @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: ShortcutChipFit.contentSpacing) {
-            HStack(spacing: ShortcutChipFit.countSpacing) {
-                Text("\(count)").font(.mono(11, .semibold))
-                Text("more").font(.system(size: 12, weight: .semibold))
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Text("\(count)")
+                    .font(.system(size: 11.5, weight: .medium))
+                    .monospacedDigit()
+                    .opacity(0.75)
+                Chevron()
+                    .stroke(.white, style: StrokeStyle(lineWidth: 1.6, lineCap: .round,
+                                                       lineJoin: .round))
+                    .frame(width: 8, height: 4.5)
+                    // Turned inside the label, never on the button: the button carries
+                    // AppKit views that cannot be laid out under a rotation.
+                    .rotationEffect(.degrees(open ? 180 : 0))
+                    .motion(Motion.control, value: open)
             }
-            if let badge {
-                Circle()
-                    .fill(badge)
-                    .frame(width: ShortcutChipFit.dotWidth, height: ShortcutChipFit.dotWidth)
-            }
-            // Upwards, because that is where the menu opens from a row this near the
-            // bottom of the window.
-            Image(systemName: "chevron.up")
-                .font(.system(size: 8, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(Theme.accentFill.brightness(hovering ? 0.06 : 0))
+            .clipShape(UnevenRoundedRectangle(bottomTrailingRadius: 9, topTrailingRadius: 9))
+            .contentShape(Rectangle())
         }
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .padding(.horizontal, ShortcutChipFit.horizontalPadding)
-        .frame(height: 22)
-        .surface(hovering ? Theme.accent.opacity(0.1) : Theme.card,
-                 cornerRadius: 7,
-                 border: hovering ? Theme.accent.opacity(0.75) : Theme.border)
-        .shadow(color: Theme.accent.opacity(hovering ? 0.32 : 0), radius: hovering ? 6 : 0)
-        .contentShape(RoundedRectangle(cornerRadius: 7))
-        .appMenu(edge: .top, menu)
+        .buttonStyle(.plain)
+        .fixedSize()
         .hoverLift(hovering)
         .onHover { hovering = $0 }
-        .appTooltip(label)
-        .accessibilityLabel(label)
-        .accessibilityHint("Opens the shortcuts that did not fit the row")
-    }
-
-    private var label: String {
-        count == 1 ? "1 more shortcut" : "\(count) more shortcuts"
+        .motion(Motion.hover, value: hovering)
+        .accessibilityLabel("All commands")
+        .accessibilityValue(open ? "Expanded" : "Collapsed")
     }
 }
 
-private struct ShortcutRowWidthKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
+// Points up, towards where the list opens from a row this near the bottom of the window.
+private struct Chevron: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { path in
+            path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+            path.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
+            path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        }
     }
 }
 
-// MARK: - Fitting the row
+// A ring turning while the command runs. With motion turned down it holds still, and the
+// words beside it still say the command is running.
+private struct RunSpinner: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-// How much of the row each command takes, and how many of them the row can hold. The
-// chips share their line with everything else the next turn runs on, so they get what is
-// left of it and no more: a chip is either wholly in the row or behind the count, never
-// half drawn against the edge of the pane.
-//
-// Widths are read from the type rather than from the chips once they are on screen. A
-// width that only settled after a chip had been drawn would feed back into the fit that
-// decided to draw it, and the row would never come to rest.
-@MainActor
-enum ShortcutChipFit {
-    static let gap: CGFloat = 7
-    static let horizontalPadding: CGFloat = 9
-    static let contentSpacing: CGFloat = 6
-    // The count and the word it counts are one phrase, so they sit closer than the parts
-    // of the chip around them.
-    static let countSpacing: CGFloat = 3
-    static let dotWidth: CGFloat = 6
-    static let newButtonWidth: CGFloat = 22
-    static let nameWidthCap: CGFloat = 104
-
-    private static let nameFont = NSFont.systemFont(ofSize: 12, weight: .semibold)
-    private static let countFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
-
-    // Running first, then just failed, then the order they were saved in. A command that
-    // is doing something has to keep its slot in the row; everything else falls back to
-    // the list the reader already knows.
-    static func ordered(_ placements: [ShortcutPlacement],
-                        state: (ShortcutPlacement) -> ShortcutStore.State) -> [ShortcutPlacement] {
-        placements.enumerated()
-            .sorted { left, right in
-                let first = rank(state(left.element))
-                let second = rank(state(right.element))
-                return first == second ? left.offset < right.offset : first < second
+    var body: some View {
+        TimelineView(.animation(paused: reduceMotion)) { context in
+            let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.8) / 0.8
+            ZStack {
+                Circle().stroke(Color.white.opacity(0.3), lineWidth: 1.8)
+                Circle()
+                    .trim(from: 0, to: 0.28)
+                    .stroke(Color.white, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                    .rotationEffect(.degrees(reduceMotion ? 0 : turn * 360))
             }
-            .map(\.element)
-    }
-
-    private static func rank(_ state: ShortcutStore.State) -> Int {
-        if state.isActive { return 0 }
-        if state.isFailure { return 1 }
-        return 2
-    }
-
-    // How many chips off the front of the row fit. The count chip is set aside before
-    // anything is fitted, so the row never promises a slot it has to take back once it
-    // turns out something was left over.
-    static func shown(widths: [CGFloat], countWidth: CGFloat, available: CGFloat) -> Int {
-        guard !widths.isEmpty else { return 0 }
-        let total = widths.reduce(0, +) + gap * CGFloat(widths.count - 1)
-        if total <= available { return widths.count }
-
-        let room = available - countWidth - gap
-        var used: CGFloat = 0
-        var shown = 0
-        for width in widths {
-            let next = used + (shown == 0 ? 0 : gap) + width
-            guard next <= room else { break }
-            used = next
-            shown += 1
         }
-        return shown
+        .frame(width: 11, height: 11)
     }
+}
 
-    static func nameWidth(_ name: String) -> CGFloat {
-        min(textWidth(name, font: nameFont), nameWidthCap)
-    }
+// The brand yellow sweeping along the bottom edge of a running command. With motion
+// turned down it is a still line instead.
+private struct RunSweep: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    static func chipWidth(name: String, glyph: String?, state: ShortcutStore.State,
-                          tinted: Bool) -> CGFloat {
-        var content: CGFloat = 0
-        var parts = 0
-        if tinted {
-            content += dotWidth
-            parts += 1
+    private static let lap = 1.1
+
+    var body: some View {
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            if reduceMotion {
+                Rectangle().fill(Theme.brand)
+            } else {
+                TimelineView(.animation) { context in
+                    let progress = context.date.timeIntervalSinceReferenceDate
+                        .truncatingRemainder(dividingBy: Self.lap) / Self.lap
+                    // The draw curve: quick out of the gate, then a long gentle finish.
+                    let eased = 1 - pow(1 - progress, 3)
+                    let sweep = width * 0.35
+                    Rectangle()
+                        .fill(Theme.brand)
+                        .frame(width: sweep)
+                        .offset(x: -sweep + eased * (width + sweep))
+                }
+            }
         }
-        if let glyph {
-            content += symbolWidth(glyph, size: 9.5, weight: .semibold)
-            parts += 1
-        }
-        content += nameWidth(name)
-        parts += 1
-        if let width = stateGlyphWidth(state) {
-            content += width
-            parts += 1
-        }
-        content += contentSpacing * CGFloat(parts - 1)
-        // Hovering a running command swaps its label for the word that opens its output,
-        // and the chip keeps its width while it does.
-        return ceil(max(content, textWidth("Show", font: nameFont))) + horizontalPadding * 2
+        .frame(height: 2)
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - A card
+
+private struct CommandCard: View {
+    enum Detail {
+        case plain(String)
+        case command(String)
+        case outcome(CommandRunSummary)
     }
 
-    // Measured for every command at once and with room for the state dot, so whatever
-    // ends up behind the count chip, the width set aside for it was enough.
-    static func countWidth(total: Int, badged: Bool) -> CGFloat {
-        var content = textWidth("\(total)", font: countFont)
-            + countSpacing
-            + textWidth("more", font: nameFont)
-            + contentSpacing
-            + symbolWidth("chevron.up", size: 8, weight: .semibold)
-        if badged { content += contentSpacing + dotWidth }
-        return ceil(content) + horizontalPadding * 2
+    let icon: String
+    let name: String
+    let detail: Detail
+    let tint: Theme.ProjectTint?
+    let dashed: Bool
+    let highlighted: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 11) {
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(dashed ? Color.secondary : Theme.accent)
+                    .frame(width: 30, height: 30)
+                    .background(RoundedRectangle(cornerRadius: 8)
+                        .fill(dashed ? Color.clear : Theme.sunken))
+                    .overlay(alignment: .topTrailing) {
+                        if let tint { ProjectDot(tint: tint, size: 6).padding(3) }
+                    }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(name)
+                        .font(.system(size: 13, weight: .semibold))
+                    detailLine
+                }
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.leading, 10)
+            .padding(.trailing, 12)
+            .padding(.vertical, 9)
+            .background(RoundedRectangle(cornerRadius: 11).fill(fill))
+            .overlay(RoundedRectangle(cornerRadius: 11)
+                .strokeBorder(highlighted ? Theme.accent : Theme.border,
+                              style: StrokeStyle(lineWidth: highlighted ? 1.5 : 1,
+                                                 dash: dashed && !highlighted ? [4, 3] : [])))
+            .shadow(color: .black.opacity(dashed ? 0 : 0.09), radius: 7, y: 4)
+            .contentShape(RoundedRectangle(cornerRadius: 11))
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .motion(Motion.hover, value: hovering)
+        .accessibilityLabel(name)
+        .accessibilityValue(accessibilityDetail)
+        .accessibilityAddTraits(highlighted ? .isSelected : [])
     }
 
-    private static func stateGlyphWidth(_ state: ShortcutStore.State) -> CGFloat? {
+    private var fill: Color {
+        hovering || highlighted ? Theme.field.opacity(0.6) : Theme.card
+    }
+
+    @ViewBuilder private var detailLine: some View {
+        switch detail {
+        case .plain(let text):
+            Text(text)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.tertiary)
+        case .command(let text):
+            Text(text)
+                .font(.mono(10.5))
+                .foregroundStyle(.secondary)
+                .truncationMode(.middle)
+        case .outcome(let summary):
+            // The state is in the glyph and the words as well as the colour, so it reads
+            // the same to someone who cannot tell the colours apart.
+            HStack(spacing: 4) {
+                if let glyph = summary.glyph {
+                    Image(systemName: glyph)
+                        .font(.system(size: 8.5, weight: .bold))
+                }
+                RollingText(summary.text, font: .system(size: 11.5))
+            }
+            .foregroundStyle(colour(of: summary.outcome))
+        }
+    }
+
+    private func colour(of outcome: CommandRunSummary.Outcome) -> Color {
+        switch outcome {
+        case .passed: Theme.addition
+        case .failed: Theme.deletion
+        case .running: Theme.dotOnText
+        case .never, .stopped: .secondary
+        }
+    }
+
+    private var accessibilityDetail: String {
+        switch detail {
+        case .plain(let text): text
+        case .command(let text): text
+        case .outcome(let summary): summary.text
+        }
+    }
+}
+
+// A key a shortcut is pressed with, drawn as a small cap.
+private struct KeyHint: View {
+    let keys: String
+    var onFill = false
+
+    init(_ keys: String, onFill: Bool = false) {
+        self.keys = keys
+        self.onFill = onFill
+    }
+
+    var body: some View {
+        Text(keys)
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(onFill ? AnyShapeStyle(.white) : AnyShapeStyle(.secondary))
+            .padding(.horizontal, 5)
+            .frame(height: 18)
+            .background(RoundedRectangle(cornerRadius: 5)
+                .fill(onFill ? Color.white.opacity(0.16) : Theme.field))
+            .overlay(RoundedRectangle(cornerRadius: 5)
+                .stroke(onFill ? Color.clear : Theme.border))
+            .accessibilityHidden(true)
+    }
+}
+
+// MARK: - How a run went
+
+// One command's last run, in the words its card shows: "Passed 12 min ago in 38s",
+// "Failed just now in 4.2s", "Never run".
+struct CommandRunSummary: Equatable {
+    enum Outcome { case never, running, passed, failed, stopped }
+
+    let state: ShortcutStore.State
+    let duration: TimeInterval?
+    let started: Bool
+    var now = Date()
+
+    var outcome: Outcome {
         switch state {
-        case .stopped: nil
-        case .running: dotWidth
-        case .finished: symbolWidth("checkmark", size: 8, weight: .bold)
-        case .failed: symbolWidth("exclamationmark", size: 9, weight: .bold)
+        case .running: .running
+        case .finished: .passed
+        case .failed: .failed
+        case .stopped: started ? .stopped : .never
         }
     }
 
-    private static var textWidths: [String: CGFloat] = [:]
-    private static var symbolWidths: [String: CGFloat] = [:]
-
-    private static func textWidth(_ text: String, font: NSFont) -> CGFloat {
-        let key = "\(font.fontName)|\(font.pointSize)|\(text)"
-        if let cached = textWidths[key] { return cached }
-        let width = ceil(NSAttributedString(string: text, attributes: [.font: font]).size().width)
-        textWidths[key] = width
-        return width
+    var text: String {
+        switch state {
+        case .running: return "Running now"
+        case .stopped: return started ? "Stopped" : "Never run"
+        case .finished(let at): return sentence("Passed", at: at)
+        case .failed(_, _, let at): return sentence("Failed", at: at)
+        }
     }
 
-    private static func symbolWidth(_ name: String, size: CGFloat,
-                                    weight: NSFont.Weight) -> CGFloat {
-        let key = "\(name)|\(size)|\(weight.rawValue)"
-        if let cached = symbolWidths[key] { return cached }
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: size, weight: weight))
-        let width = ceil(image?.size.width ?? size)
-        symbolWidths[key] = width
-        return width
+    var glyph: String? {
+        switch outcome {
+        case .passed: "checkmark"
+        case .failed: "xmark"
+        case .running: "circle.fill"
+        case .stopped: "stop.fill"
+        case .never: nil
+        }
+    }
+
+    private func sentence(_ verb: String, at: Date) -> String {
+        let when = Self.ago(now.timeIntervalSince(at))
+        guard let duration else { return "\(verb) \(when)" }
+        return "\(verb) \(when) in \(Self.length(duration))"
+    }
+
+    // "just now", "12 min ago", "3 h ago", "2 d ago".
+    static func ago(_ seconds: TimeInterval) -> String {
+        let seconds = max(0, seconds)
+        if seconds < 60 { return "just now" }
+        if seconds < 3_600 { return "\(Int(seconds / 60)) min ago" }
+        if seconds < 86_400 { return "\(Int(seconds / 3_600)) h ago" }
+        return "\(Int(seconds / 86_400)) d ago"
+    }
+
+    // "4.2s", "38s", "1m 12s", "1h 5m": tenths only while they still matter.
+    static func length(_ seconds: TimeInterval) -> String {
+        let seconds = max(0, seconds)
+        if seconds < 10 { return String(format: "%.1fs", seconds) }
+        if seconds < 60 { return "\(Int(seconds))s" }
+        let whole = Int(seconds)
+        if whole < 3_600 { return "\(whole / 60)m \(whole % 60)s" }
+        return "\(whole / 3_600)h \(whole % 3_600 / 60)m"
+    }
+
+    // The clock on a running button: "4.2s" for the first minute, then "1:12".
+    static func elapsed(_ seconds: TimeInterval) -> String {
+        let seconds = max(0, seconds)
+        if seconds < 60 { return String(format: "%.1fs", seconds) }
+        let whole = Int(seconds)
+        return "\(whole / 60):" + String(format: "%02d", whole % 60)
+    }
+}
+
+// MARK: - Keys and clicks while the list is open
+
+// Catches the keys the open list answers, and the click that lands anywhere else. A
+// local monitor sees them before the prompt field does, which is what lets the arrows
+// move through the list while the cursor is still in the prompt.
+@MainActor
+final class CommandListMonitor {
+    enum Key { case up, down, choose, close }
+
+    private var token: Any?
+
+    func start(anchor: FrameAnchor, regions: [FrameAnchor],
+               key: @escaping (Key) -> Void, outside: @escaping () -> Void) {
+        stop()
+        token = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown]) { event in
+            let consumed = MainActor.assumeIsolated { () -> Bool in
+                guard let window = anchor.view?.window, event.window === window else { return false }
+                if event.type == .leftMouseDown {
+                    guard let content = window.contentView else { return false }
+                    let point = FrameAnchor.fromTop(event.locationInWindow, in: content)
+                    if !regions.contains(where: { $0.frame()?.contains(point) == true }) {
+                        outside()
+                    }
+                    return false
+                }
+                guard WindowKeyMonitor.routes(to: window, frontmost: NSApp.keyWindow),
+                      event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+                      let pressed = Self.key(for: event.keyCode) else { return false }
+                key(pressed)
+                return true
+            }
+            return consumed ? nil : event
+        }
+    }
+
+    func stop() {
+        if let token { NSEvent.removeMonitor(token) }
+        token = nil
+    }
+
+    private static func key(for code: UInt16) -> Key? {
+        switch code {
+        case 126: .up
+        case 125: .down
+        case 36, 76: .choose
+        case 53: .close
+        default: nil
+        }
     }
 }
 
@@ -768,8 +939,8 @@ extension View {
 
 enum SessionShortcuts {
     // The last shell command the agent ran in this session, for the menu entry that
-    // turns it into a saved shortcut. Only single-line commands are offered: a chip
-    // names one thing, and a heredoc pasted into a chip name is not that.
+    // turns it into a saved shortcut. Only single-line commands are offered: a saved
+    // command names one thing, and a heredoc pasted into one is not that.
     static func lastAgentCommand(in session: ChatSession) -> String? {
         for message in session.messages.reversed() where message.role == .assistant {
             for tool in message.tools.reversed() where tool.name == "Bash" {

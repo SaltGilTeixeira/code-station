@@ -1996,30 +1996,25 @@ struct SessionView: View {
     // controls. What the session has done and where belongs on the status strip, not
     // here - this line is only ever about what happens next.
     //
-    // The saved commands sit at the end of it for the same reason. Running the tests for
-    // what was just written is the next thing that happens as much as sending another
-    // prompt is, and docking them here keeps them off a status strip that has to stay one
-    // glance wide however many commands a project collects.
+    // The saved commands sit at the end of it, behind one Run button, for the same
+    // reason. Running the tests for what was just written is the next thing that happens
+    // as much as sending another prompt is.
     @ViewBuilder private func runChoices(_ session: ChatSession, project: Project) -> some View {
         HStack(spacing: 10) {
             if session.settings?.mcpServersEnabled == false {
                 MonoChip(text: "MCP off", size: 10.5, bordered: true)
             }
             SessionRunSettingsControls(sessionID: sessionID)
+            Spacer(minLength: 12)
 
             // Ad-hoc tasks run in a private folder the app made for one prompt, so there
             // is nothing there worth saving a command against.
             if project.kind == .project {
-                // The commands take the rest of the row, so they end at its right edge
-                // and fit themselves to whatever is left of it once there are more of
-                // them than it can hold.
-                SessionShortcutChips(session: session,
-                                     edit: { shortcutEditor = $0 })
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            } else {
-                Spacer(minLength: 12)
+                SessionRunButton(session: session, edit: { shortcutEditor = $0 })
             }
         }
+        // The command list rises over the transcript, so the row is drawn above it.
+        .zIndex(1)
     }
 
     private func botSelection(for session: ChatSession) -> Binding<String> {

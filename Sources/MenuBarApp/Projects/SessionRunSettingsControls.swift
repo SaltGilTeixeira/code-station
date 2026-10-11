@@ -2,6 +2,10 @@ import SwiftUI
 
 // The settings for the next turn are shared by Chat and Design. Both surfaces use this
 // view so a choice has the same meaning and follows the same app default in either mode.
+//
+// Each control shows its own state rather than only its name: the model as the pill that
+// is picked, the effort as a meter, and how much the agent asks before it acts as a
+// shield coloured by how far it is trusted.
 struct SessionRunSettingsControls: View {
     @Environment(ProjectStore.self) private var store
     @Environment(SessionRunner.self) private var runner
@@ -21,11 +25,11 @@ struct SessionRunSettingsControls: View {
                     .fixedSize()
                     .appTooltip("This session always runs on \(agent.title).")
                 modelControl(session, lastRan: session.usage?.model(for: agent))
-                effortMenu(agent: agent)
+                effortControl(agent: agent)
                 switch agent {
-                case .claudeCode: permissionsMenu(agent: agent)
-                case .codex: codexAccessMenu(agent: agent)
-                case .copilot: copilotAccessMenu(agent: agent)
+                case .claudeCode: permissionsControl(agent: agent)
+                case .codex: codexAccessControl(agent: agent)
+                case .copilot: copilotAccessControl(agent: agent)
                 }
             }
             .task(id: agent) { await runner.discoverModels(for: agent) }
@@ -42,23 +46,54 @@ struct SessionRunSettingsControls: View {
         store.setSettings(updated, for: sessionID)
     }
 
+    // MARK: - Model
+
+    // Every model the agent offers, one click each. A catalog too long for one row, or a
+    // pane too narrow for it, falls back to a menu rather than pushing the rest of the
+    // bar off the edge.
     @ViewBuilder private func modelControl(_ session: ChatSession, lastRan: String?) -> some View {
-        let settings = sessionSettings
         let agent = session.agent
-        let model = runner.validModel(settings.model, for: agent)
+        let model = runner.validModel(sessionSettings.model, for: agent)
+        let options = runner.modelOptions(for: agent)
+        let choose = { (id: String?) in chooseModel(id, for: session, lastRan: lastRan) }
+
+        if options.count <= ModelPills.maximumCount {
+            ViewThatFits(in: .horizontal) {
+                ModelPills(options: options, selected: model, choose: choose)
+                    .appTooltip("The model this session will use for its next turn.")
+                modelMenu(agent: agent, model: model, lastRan: lastRan, choose: choose)
+            }
+        } else {
+            modelMenu(agent: agent, model: model, lastRan: lastRan, choose: choose)
+        }
+    }
+
+    private func modelMenu(agent: AgentKind, model: String?, lastRan: String?,
+                           choose: @escaping (String?) -> Void) -> some View {
         let label = model.map { runner.modelTitle($0) }
             ?? lastRan.map { ModelChoice.shortName(of: $0) }
             ?? "Default model"
-        settingMenu(label,
-                    overridden: model != nil,
-                    help: "The model this session will use for its next turn.",
-                    defaultTitle: "Use \(agent.title) default",
-                    options: runner.modelOptions(for: agent).compactMap { choice in
-                        choice.id.map { (id: $0, title: choice.title) }
-                    },
-                    selection: Binding(get: { model },
-                                       set: { id in chooseModel(id, for: session,
-                                                                lastRan: lastRan) }))
+        return BarPill {
+            HStack(spacing: 6) {
+                RollingText(label, font: .system(size: 12, weight: .semibold))
+                MenuChevron(size: 8)
+            }
+        }
+        .appMenu(edge: .top) {
+            var entries: [MenuEntry] = [
+                .item("Use \(agent.title) default", checked: model == nil) { choose(nil) },
+                .separator,
+            ]
+            entries += runner.modelOptions(for: agent).compactMap { option in
+                option.id.map { id in
+                    MenuEntry.item(option.title, checked: model == id) { choose(id) }
+                }
+            }
+            return entries
+        }
+        .appTooltip(model == nil ? "The model this session will use for its next turn."
+                    : "The model this session will use for its next turn. Overridden for this session.")
+        .accessibilityLabel("Model: \(label)")
     }
 
     private func chooseModel(_ model: String?, for session: ChatSession, lastRan: String?) {
@@ -95,120 +130,392 @@ struct SessionRunSettingsControls: View {
         }
     }
 
-    private func effortMenu(agent: AgentKind) -> some View {
+    // MARK: - Effort
+
+    private func effortControl(agent: AgentKind) -> some View {
         let settings = sessionSettings
         let model = runner.validModel(settings.model, for: agent)
         let override = runner.validEffort(settings.effort, for: agent, model: model)
         let appDefault = runner.validEffort(runner.defaults(for: agent).effort,
                                             for: agent, model: model)
         let chosen = override ?? appDefault
+        let levels = runner.effortOptions(for: agent, model: model).compactMap(\.id)
+        let title = chosen.map { runner.effortTitle($0, for: agent, model: model) } ?? "Default"
         let inheritedEffort = appDefault.map { runner.effortTitle($0, for: agent, model: model) }
             ?? "\(agent.title) settings"
-        return settingMenu(
-            chosen.map { "\(runner.effortTitle($0, for: agent, model: model)) effort" }
-                ?? "\(agent.title) default effort",
-            overridden: override != nil,
-            help: "How long the model thinks before it answers. Inherit Code Station's default, or choose a level for this run.",
-            defaultTitle: "Use Code Station default (\(inheritedEffort))",
-            options: runner.effortOptions(for: agent, model: model).compactMap { choice in
-                choice.id.map { (id: $0, title: choice.title) }
-            },
-            selection: Binding(get: { override },
-                               set: { id in changeSettings { $0.effort = id } }))
+        let help = "How long the model thinks before it answers. Inherit Code Station's default, or choose a level for this run."
+
+        return EffortPill(title: title, lit: EffortMeter.lit(for: chosen, among: levels))
+            .appMenu(edge: .top) {
+                var entries: [MenuEntry] = [
+                    .item("Use Code Station default (\(inheritedEffort))",
+                          meter: EffortMeter.lit(for: appDefault, among: levels),
+                          checked: override == nil) {
+                        changeSettings { $0.effort = nil }
+                    },
+                    .separator,
+                ]
+                entries += levels.map { level in
+                    MenuEntry.item(runner.effortTitle(level, for: agent, model: model),
+                                   meter: EffortMeter.lit(for: level, among: levels),
+                                   checked: override == level) {
+                        changeSettings { $0.effort = level }
+                    }
+                }
+                return entries
+            }
+            .appTooltip(override != nil ? "\(help) Overridden for this session." : help)
+            .accessibilityLabel("Effort: \(title)")
     }
 
-    private func permissionsMenu(agent: AgentKind) -> some View {
+    // MARK: - Asks before
+
+    private func permissionsControl(agent: AgentKind) -> some View {
         let settings = sessionSettings
         let defaults = runner.defaults(for: agent)
-        return settingMenu(
-            PermissionMode(stored: settings.permissionMode ?? defaults.permissionMode).shortTitle,
+        let selected = PermissionMode(stored: settings.permissionMode ?? defaults.permissionMode)
+        let appDefault = PermissionMode(stored: defaults.permissionMode)
+        return shieldControl(
+            tone: TrustTone(selected),
+            title: selected.shortTitle,
             overridden: settings.permissionMode != nil,
             help: "How much the agent asks before it acts.",
-            defaultTitle: defaultTitle(
-                PermissionMode(stored: defaults.permissionMode).shortTitle),
-            options: PermissionMode.allCases.map { (id: $0.rawValue, title: $0.title) },
+            defaultEntry: (title: defaultTitle(appDefault.shortTitle), tone: TrustTone(appDefault)),
+            options: PermissionMode.allCases.map {
+                ShieldOption(id: $0.rawValue, title: $0.shortTitle, detail: $0.title,
+                             tone: TrustTone($0))
+            },
             selection: Binding(get: { settings.permissionMode },
-                               set: { mode in
-                                   changeSettings { $0.permissionMode = mode }
-                               }))
+                               set: { mode in changeSettings { $0.permissionMode = mode } }))
     }
 
-    private func codexAccessMenu(agent: AgentKind) -> some View {
+    private func codexAccessControl(agent: AgentKind) -> some View {
         let settings = sessionSettings
         let override = CodexSandboxMode.valid(settings.codexSandboxMode)
         let appDefault = CodexSandboxMode.resolved(runner.defaults(for: agent).codexSandboxMode)
         let selected = override ?? appDefault
-        return settingMenu(
-            selected.summary,
+        return shieldControl(
+            tone: TrustTone(selected),
+            title: selected.summary,
             overridden: override != nil,
             help: selected.detail,
-            defaultTitle: defaultTitle(appDefault.title),
-            options: CodexSandboxMode.allCases.map { (id: $0.rawValue, title: $0.title) },
-            warning: selected == .fullAccess,
-            warningOption: CodexSandboxMode.fullAccess.rawValue,
+            defaultEntry: (title: defaultTitle(appDefault.title), tone: TrustTone(appDefault)),
+            options: CodexSandboxMode.allCases.map {
+                ShieldOption(id: $0.rawValue, title: $0.title,
+                             detail: $0 == .fullAccess ? Self.unrestricted : nil,
+                             tone: TrustTone($0))
+            },
             selection: Binding(get: { override?.rawValue },
-                               set: { value in
-                                   changeSettings { $0.codexSandboxMode = value }
-                               }))
+                               set: { value in changeSettings { $0.codexSandboxMode = value } }))
     }
 
-    private func copilotAccessMenu(agent: AgentKind) -> some View {
+    private func copilotAccessControl(agent: AgentKind) -> some View {
         let settings = sessionSettings
         let override = CopilotAccessMode.valid(settings.copilotAccessMode)
         let appDefault = CopilotAccessMode.resolved(runner.defaults(for: agent).copilotAccessMode)
         let selected = override ?? appDefault
-        return settingMenu(
-            selected.summary,
+        return shieldControl(
+            tone: TrustTone(selected),
+            title: selected.summary,
             overridden: override != nil,
             help: selected.detail,
-            defaultTitle: defaultTitle(appDefault.title),
-            options: CopilotAccessMode.allCases.map { (id: $0.rawValue, title: $0.title) },
-            warning: selected == .fullAccess,
-            warningOption: CopilotAccessMode.fullAccess.rawValue,
+            defaultEntry: (title: defaultTitle(appDefault.title), tone: TrustTone(appDefault)),
+            options: CopilotAccessMode.allCases.map {
+                ShieldOption(id: $0.rawValue, title: $0.title,
+                             detail: $0 == .fullAccess ? Self.unrestricted : nil,
+                             tone: TrustTone($0))
+            },
             selection: Binding(get: { override?.rawValue },
-                               set: { value in
-                                   changeSettings { $0.copilotAccessMode = value }
-                               }))
+                               set: { value in changeSettings { $0.copilotAccessMode = value } }))
+    }
+
+    private static let unrestricted = "No file, service, or network restrictions."
+
+    private struct ShieldOption {
+        let id: String
+        let title: String
+        let detail: String?
+        let tone: TrustTone
     }
 
     private func defaultTitle(_ resolved: String?) -> String {
         resolved.map { "Use the default (\($0))" } ?? "Use the default"
     }
 
-    private func settingMenu(_ label: String, overridden: Bool, help: String,
-                             defaultTitle: String,
-                             options: [(id: String, title: String)],
-                             warning: Bool = false,
-                             warningOption: String? = nil,
-                             selection: Binding<String?>) -> some View {
-        HStack(spacing: 4) {
-            Text(label)
-                .font(.system(size: 11, weight: overridden ? .semibold : .regular))
-            Image(systemName: "chevron.down")
-                .font(.system(size: 7, weight: .semibold))
-        }
-        .foregroundStyle(warning ? Theme.deletion
-                                 : overridden ? Theme.accent : Color.secondary)
-        .fixedSize()
-        .appMenu {
-            var entries: [MenuEntry] = [
-                .item(defaultTitle, checked: selection.wrappedValue == nil) {
-                    selection.wrappedValue = nil
-                },
-                .separator,
-            ]
-            entries += options.map { option in
-                MenuEntry.item(option.title,
-                               kind: option.id == warningOption ? .destructive : .plain,
-                               checked: selection.wrappedValue == option.id,
-                               subtitle: option.id == warningOption
-                                   ? "No file, service, or network restrictions."
-                                   : nil) {
-                    selection.wrappedValue = option.id
+    private func shieldControl(tone: TrustTone, title: String, overridden: Bool, help: String,
+                               defaultEntry: (title: String, tone: TrustTone),
+                               options: [ShieldOption],
+                               selection: Binding<String?>) -> some View {
+        ShieldPill(tone: tone, title: title)
+            .appMenu(edge: .top) {
+                var entries: [MenuEntry] = [
+                    .item(defaultEntry.title, icon: "shield", iconTint: defaultEntry.tone.ink,
+                          checked: selection.wrappedValue == nil) {
+                        selection.wrappedValue = nil
+                    },
+                    .separator,
+                ]
+                entries += options.map { option in
+                    MenuEntry.item(option.title,
+                                   kind: option.tone == .unrestricted ? .destructive : .plain,
+                                   icon: "shield", iconTint: option.tone.ink,
+                                   checked: selection.wrappedValue == option.id,
+                                   subtitle: option.detail) {
+                        selection.wrappedValue = option.id
+                    }
                 }
+                return entries
             }
-            return entries
+            .appTooltip(overridden ? "\(help) Overridden for this session." : help)
+            .accessibilityLabel("Asks before: \(title)")
+    }
+}
+
+// MARK: - Model pills
+
+// The models as a row of pills on one track, with a thumb that slides to the one picked.
+struct ModelPills: View {
+    // More than this and the row stops being a glance, so the bar shows a menu instead.
+    static let maximumCount = 5
+
+    let options: [ModelChoice.Option]
+    let selected: String?
+    let choose: (String?) -> Void
+
+    @Namespace private var thumb
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options) { option in
+                ChoicePill(title: option.title, selected: option.id == selected,
+                           thumb: thumb) { choose(option.id) }
+                    .accessibilityHint(option.detail)
+            }
         }
-        .appTooltip(overridden ? "\(help) Overridden for this session." : help)
+        .padding(2)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.field))
+        .fixedSize()
+        .motion(Motion.control, value: selected)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Model")
+    }
+}
+
+// MARK: - Effort
+
+// Four bars, lit from the left as the level rises. Each bar changes on its own beat, in
+// the direction the level moved, so the meter visibly fills up or drains down.
+struct EffortMeter: View {
+    let lit: Int
+    var height: CGFloat = 14
+
+    @State private var previous: Int?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    static let bars = 4
+
+    // How many bars a level lights. No choice lights none; the lowest level lights one
+    // and the highest all four, with whatever lies between spread evenly across them, so
+    // an agent with five levels and one with three both read on the same scale.
+    static func lit(for level: String?, among levels: [String]) -> Int {
+        guard let level, let index = levels.firstIndex(of: level) else { return 0 }
+        guard levels.count > 1 else { return bars }
+        let share = Double(index) / Double(levels.count - 1)
+        return 1 + Int((share * Double(bars - 1)).rounded())
+    }
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: height * 0.18) {
+            ForEach(0..<Self.bars, id: \.self) { bar in
+                RoundedRectangle(cornerRadius: 1.5)
+                    .fill(bar < lit ? Theme.accent : Theme.settingsBorder)
+                    .frame(width: height * 0.28, height: barHeight(bar))
+                    .animation(reduceMotion ? nil : Motion.pop.delay(delay(of: bar)), value: lit)
+            }
+        }
+        .frame(height: height, alignment: .bottom)
+        .onChange(of: lit, initial: true) { _, now in previous = now }
+        .accessibilityHidden(true)
+    }
+
+    // The bars climb from a quarter of the meter's height to all of it.
+    private func barHeight(_ bar: Int) -> CGFloat {
+        let share = CGFloat(bar + 1) / CGFloat(Self.bars)
+        return height * (0.25 + 0.75 * share)
+    }
+
+    private func delay(of bar: Int) -> Double {
+        let from = previous ?? lit
+        let step = lit > from ? bar - from : from - 1 - bar
+        return Double(max(0, step)) * 0.04
+    }
+}
+
+private struct EffortPill: View {
+    let title: String
+    let lit: Int
+
+    // The level as it was before this change, read while the change is being drawn so
+    // the word knows which way to roll.
+    @State private var previous: Int?
+
+    var body: some View {
+        BarPill {
+            HStack(spacing: 7) {
+                EffortMeter(lit: lit)
+                RollingText(title, rising: lit >= (previous ?? lit),
+                            font: .system(size: 12, weight: .semibold))
+                Text("effort")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                MenuChevron(size: 8)
+            }
+        }
+        .onChange(of: lit, initial: true) { _, now in previous = now }
+    }
+}
+
+// MARK: - Asks before
+
+// How far the agent is trusted to act without asking, as the colour of its shield. Green
+// asks before everything, plain only asks about risky steps, amber lets edits through,
+// and blue changes nothing at all. Red is kept for access with no limits whatever.
+enum TrustTone: Equatable {
+    case asksEverything
+    case risky
+    case allowsEdits
+    case plans
+    case unrestricted
+
+    init(_ mode: PermissionMode) {
+        self = switch mode {
+        case .manual: .asksEverything
+        case .auto: .risky
+        case .acceptEdits: .allowsEdits
+        case .plan: .plans
+        }
+    }
+
+    init(_ mode: CodexSandboxMode) {
+        self = switch mode {
+        case .workspaceWrite: .risky
+        case .approveForMe: .allowsEdits
+        case .fullAccess: .unrestricted
+        }
+    }
+
+    init(_ mode: CopilotAccessMode) {
+        self = switch mode {
+        case .workspace: .allowsEdits
+        case .fullAccess: .unrestricted
+        }
+    }
+
+    var ink: Color {
+        switch self {
+        case .asksEverything: Theme.addition
+        case .risky: .primary
+        case .allowsEdits: Theme.attentionText
+        case .plans: Theme.plan
+        // The red read as words, which has to carry on its own tint in dark mode.
+        case .unrestricted: Theme.warningText
+        }
+    }
+
+    var fill: Color {
+        switch self {
+        case .asksEverything: Theme.addition.opacity(0.14)
+        case .risky: Theme.field
+        case .allowsEdits: Theme.attention.opacity(0.18)
+        case .plans: Theme.plan.opacity(0.14)
+        case .unrestricted: Theme.deletion.opacity(0.14)
+        }
+    }
+}
+
+private struct ShieldPill: View {
+    let tone: TrustTone
+    let title: String
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        BarPill(fill: tone.fill) {
+            HStack(spacing: 6) {
+                Image(systemName: "shield")
+                    .font(.system(size: 12, weight: .semibold))
+                    // The swell is on the glyph inside the label: the pill around it hosts
+                    // AppKit views that cannot be laid out under a transform.
+                    .keyframeAnimator(initialValue: 1.0, trigger: reduceMotion ? nil : tone) { glyph, scale in
+                        glyph.scaleEffect(scale)
+                    } keyframes: { _ in
+                        SpringKeyframe(1.25, duration: 0.15)
+                        SpringKeyframe(1.0, duration: 0.23, spring: .bouncy)
+                    }
+                RollingText(title, font: .system(size: 12, weight: .semibold))
+                MenuChevron(size: 8, tint: tone.ink.opacity(0.7))
+            }
+            .foregroundStyle(tone.ink)
+        }
+        .motion(Motion.pop, value: tone)
+    }
+}
+
+// MARK: - Shared pieces
+
+// The rounded pill every menu control on the bar is drawn on, so they share one height
+// and one way of answering the pointer.
+struct BarPill<Content: View>: View {
+    var fill: Color = Theme.field
+    @ViewBuilder let content: Content
+
+    @State private var hovering = false
+    @Environment(\.menuIsOpen) private var open
+
+    init(fill: Color = Theme.field, @ViewBuilder content: () -> Content) {
+        self.fill = fill
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(Capsule().fill(fill))
+            .overlay(Capsule().fill(Color.primary.opacity(hovering || open ? 0.05 : 0)))
+            .contentShape(Capsule())
+            .fixedSize()
+            .hoverLift(hovering)
+            .onHover { hovering = $0 }
+            .motion(Motion.hover, value: hovering)
+    }
+}
+
+// A word that changes rolls: the old one goes up and out, the new one comes in from
+// below, and the width follows. A level that falls rolls the other way.
+struct RollingText: View {
+    let text: String
+    var rising = true
+    let font: Font
+
+    init(_ text: String, rising: Bool = true, font: Font) {
+        self.text = text
+        self.rising = rising
+        self.font = font
+    }
+
+    var body: some View {
+        ZStack {
+            Text(text)
+                .font(font)
+                .fixedSize()
+                .id(text)
+                .transition(.asymmetric(
+                    insertion: .move(edge: rising ? .bottom : .top).combined(with: .opacity),
+                    removal: .move(edge: rising ? .top : .bottom).combined(with: .opacity)))
+        }
+        .clipped()
+        .motion(Motion.control, value: text)
     }
 }

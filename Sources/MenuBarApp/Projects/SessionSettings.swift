@@ -254,10 +254,10 @@ enum PermissionMode: String, CaseIterable, Identifiable {
     // What the mode is called where a sentence does not fit, like the composer bar.
     var shortTitle: String {
         switch self {
-        case .acceptEdits: "Accept edits"
-        case .manual: "Ask everything"
-        case .auto: "Ask risky only"
-        case .plan: "Plan"
+        case .acceptEdits: "Allow edits"
+        case .manual: "Every step"
+        case .auto: "Risky only"
+        case .plan: "Plan only"
         }
     }
 

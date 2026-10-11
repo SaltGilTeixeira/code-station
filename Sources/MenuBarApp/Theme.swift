@@ -62,6 +62,13 @@ enum Theme {
         light: NSColor(srgbRed: 0.541, green: 0.365, blue: 0.063, alpha: 1),
         dark: NSColor(srgbRed: 0.90, green: 0.72, blue: 0.36, alpha: 1))
 
+    // An agent that only reads and proposes. Blue sits apart from the green, plain and
+    // amber of the levels that let it act, so a session that can change nothing is never
+    // mistaken for one that can. WarningContrastTests measures it on its own tint.
+    static let plan = adaptive(
+        light: NSColor(srgbRed: 0.190, green: 0.380, blue: 0.620, alpha: 1),
+        dark: NSColor(srgbRed: 0.498, green: 0.659, blue: 0.871, alpha: 1))
+
     // The mark on anything the app itself owns: the brand tile, and Home wherever it
     // needs a colour of its own.
     static let brand = Color(red: 0.867, green: 0.878, blue: 0.282)

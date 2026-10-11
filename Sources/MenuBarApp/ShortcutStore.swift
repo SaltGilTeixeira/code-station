@@ -157,6 +157,12 @@ final class ShortcutStore {
     private(set) var shortcuts: [Shortcut] = SiteDefaults.current.startingShortcuts
     private(set) var states: [ShortcutRun: State] = [:]
     private(set) var logs: [ShortcutRun: String] = [:]
+    // How long each run's last finish took. Kept beside the state rather than inside it,
+    // so a state can still be compared and matched on without the timing in the way.
+    private(set) var durations: [ShortcutRun: TimeInterval] = [:]
+    // The command each screen ran last, which is what its Run button offers again. It is
+    // here rather than in the view for the same reason the open output is.
+    private var lastStarted: [ShortcutScope: Shortcut.ID] = [:]
     // Which run each screen has its output open on. It is kept here rather than in the
     // view because a pane is thrown away and built again every time the sidebar moves,
     // and a command started before switching away is the one most worth coming back to.
@@ -293,6 +299,20 @@ final class ShortcutStore {
         logs[run] ?? ""
     }
 
+    func duration(_ run: ShortcutRun) -> TimeInterval? {
+        durations[run]
+    }
+
+    // A run is given a log the moment it starts, so a stopped run that has a log was
+    // started and then called off, and one without has never been run here at all.
+    func hasStarted(_ run: ShortcutRun) -> Bool {
+        logs[run] != nil
+    }
+
+    func lastStarted(for scope: ShortcutScope) -> Shortcut.ID? {
+        lastStarted[scope]
+    }
+
     // MARK: - The output drawer
 
     func output(for scope: ShortcutScope) -> ShortcutRun? {
@@ -306,6 +326,7 @@ final class ShortcutStore {
     // A deleted project or session leaves nothing that can reach its drawer again.
     func discard(_ scope: ShortcutScope) {
         openOutput[scope] = nil
+        lastStarted[scope] = nil
     }
 
     // MARK: - Persistence
@@ -443,8 +464,9 @@ final class ShortcutStore {
 
     // MARK: - Running
 
-    func start(_ run: ShortcutRun) {
+    func start(_ run: ShortcutRun, for scope: ShortcutScope? = nil) {
         guard !state(run).isActive, let shortcut = shortcut(run.shortcutID) else { return }
+        if let scope { lastStarted[scope] = run.shortcutID }
 
         let token = UUID()
         runTokens[run] = token
@@ -503,6 +525,7 @@ final class ShortcutStore {
     private func forgetRuns(of id: Shortcut.ID) {
         for run in states.keys where run.shortcutID == id { states[run] = nil }
         for run in logs.keys where run.shortcutID == id { logs[run] = nil }
+        for run in durations.keys where run.shortcutID == id { durations[run] = nil }
         for run in runTokens.keys where run.shortcutID == id { runTokens[run] = nil }
         // Every screen showing one of these runs loses it, not just the one the reader
         // was on: the drawer has nothing left to report.
@@ -514,6 +537,7 @@ final class ShortcutStore {
     private func finished(_ run: ShortcutRun, token: UUID, status: Int32) {
         guard runTokens[run] == token else { return }
         tasks[run] = nil
+        recordDuration(of: run)
         states[run] = status == 0
             ? .finished(at: Date())
             : .failed("Exited with code \(status). See output below.",
@@ -526,6 +550,7 @@ final class ShortcutStore {
         if error == .cancelled {
             states[run] = .stopped
         } else {
+            recordDuration(of: run)
             states[run] = .failed(error.localizedDescription, at: Date())
         }
     }
@@ -533,7 +558,13 @@ final class ShortcutStore {
     private func failed(_ run: ShortcutRun, token: UUID, message: String) {
         guard runTokens[run] == token else { return }
         tasks[run] = nil
+        recordDuration(of: run)
         states[run] = .failed(message, at: Date())
+    }
+
+    private func recordDuration(of run: ShortcutRun) {
+        guard case .running(let since) = state(run) else { return }
+        durations[run] = Date().timeIntervalSince(since)
     }
 
     private func append(_ data: Data, to run: ShortcutRun, token: UUID) {

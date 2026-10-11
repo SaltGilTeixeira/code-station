@@ -287,6 +287,46 @@ struct ShortcutStoreTests {
         #expect(store.output(for: third) == ShortcutRun(kept, in: directory))
     }
 
+    // A card says how long its last run took, so the time is kept when the run ends,
+    // whichever way it ends.
+    @Test func recordsHowLongARunTook() async throws {
+        let store = emptyStore(url)
+        let passing = try #require(store.add(name: "Build", text: "sleep 0.2"))
+        let failing = try #require(store.add(name: "Lint", text: "exit 1"))
+        let folder = FileManager.default.temporaryDirectory.path
+        let pass = ShortcutRun(passing, in: folder)
+        let fail = ShortcutRun(failing, in: folder)
+
+        #expect(!store.hasStarted(pass))
+        store.start(pass)
+        store.start(fail)
+        #expect(store.hasStarted(pass))
+        #expect(store.duration(pass) == nil)
+        #expect(await waitUntil { !store.state(pass).isActive && !store.state(fail).isActive })
+
+        #expect(try #require(store.duration(pass)) >= 0.2)
+        #expect(store.duration(fail) != nil)
+    }
+
+    // Run offers again what this session ran last, and another session keeps its own.
+    @Test func remembersTheLastCommandEachScreenStarted() throws {
+        let store = emptyStore(url)
+        let build = try #require(store.add(name: "Build", text: "true"))
+        let lint = try #require(store.add(name: "Lint", text: "true"))
+        let folder = FileManager.default.temporaryDirectory.path
+        let one = ShortcutScope.session(UUID())
+        let two = ShortcutScope.session(UUID())
+
+        store.start(ShortcutRun(build, in: folder), for: one)
+        store.start(ShortcutRun(lint, in: folder), for: two)
+
+        #expect(store.lastStarted(for: one) == build)
+        #expect(store.lastStarted(for: two) == lint)
+
+        store.discard(one)
+        #expect(store.lastStarted(for: one) == nil)
+    }
+
     // A deleted project or session cannot be reached again, so nothing should stay
     // filed under it.
     @Test func discardsTheOutputOfADeletedScreen() throws {

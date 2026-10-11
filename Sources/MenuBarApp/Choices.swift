@@ -196,32 +196,16 @@ struct ChoicePill: View {
     // consequence, so the warning is on the option itself rather than only in the
     // notice a click away.
     var dot: Color? = nil
+    // Pills sharing a track pass the track's namespace, and the picked one's fill then
+    // slides across to the next pick instead of fading out of one pill and into another.
+    var thumb: Namespace.ID? = nil
     let choose: () -> Void
 
     @State private var hovering = false
 
     var body: some View {
         Button(action: choose) {
-            HStack(spacing: 7) {
-                if let dot {
-                    // The accent fill swallows an amber dot, so a picked pill carries the
-                    // brand mark instead and the warning stays visible on it.
-                    Circle()
-                        .fill(selected ? Theme.brand : dot)
-                        .frame(width: 6, height: 6)
-                }
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    // A squeezed pill must never fold its title onto two lines.
-                    .lineLimit(1)
-                    .fixedSize()
-            }
-            .foregroundStyle(selected ? Color.white : Color.secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .surface(fill, cornerRadius: 8, border: selected ? .clear : Theme.border)
-            .contentShape(Rectangle())
-            .opacity(enabled ? 1 : 0.45)
+            label
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -229,6 +213,48 @@ struct ChoicePill: View {
         .onHover { hovering = $0 }
         .motion(Motion.control, value: selected)
         .motion(Motion.hover, value: hovering)
+    }
+
+    @ViewBuilder private var label: some View {
+        if let thumb {
+            content
+                .background {
+                    if selected {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Theme.accentFill)
+                            .matchedGeometryEffect(id: "thumb", in: thumb)
+                    } else if hovering && enabled {
+                        RoundedRectangle(cornerRadius: 8).fill(Theme.field)
+                    }
+                }
+                .contentShape(Rectangle())
+                .opacity(enabled ? 1 : 0.45)
+        } else {
+            content
+                .surface(fill, cornerRadius: 8, border: selected ? .clear : Theme.border)
+                .contentShape(Rectangle())
+                .opacity(enabled ? 1 : 0.45)
+        }
+    }
+
+    private var content: some View {
+        HStack(spacing: 7) {
+            if let dot {
+                // The accent fill swallows an amber dot, so a picked pill carries the
+                // brand mark instead and the warning stays visible on it.
+                Circle()
+                    .fill(selected ? Theme.brand : dot)
+                    .frame(width: 6, height: 6)
+            }
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                // A squeezed pill must never fold its title onto two lines.
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .foregroundStyle(selected ? Color.white : Color.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 
     private var fill: Color {

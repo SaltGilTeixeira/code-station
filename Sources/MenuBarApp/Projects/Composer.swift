@@ -118,8 +118,8 @@ struct Composer<Above: View, Accessory: View>: View {
                 primaryButton(state: state, canSend: canSend)
             }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: canSend)
-            .animation(reduceMotion ? nil : TurnMotion.swap, value: busy)
-            .animation(reduceMotion ? nil : TurnMotion.swap, value: state == .stopping)
+            .animation(reduceMotion ? nil : Motion.control, value: busy)
+            .animation(reduceMotion ? nil : Motion.control, value: state == .stopping)
         }
         .padding(.horizontal, inset)
         .padding(.vertical, 14)
@@ -155,44 +155,58 @@ struct Composer<Above: View, Accessory: View>: View {
     // glyph turns into the next one: the button carries views AppKit lays out itself,
     // and those cannot be spun or shrunk. With nothing to send it keeps its place, so the
     // field does not change width as soon as there is something.
+    //
+    // Idle it is the green send arrow. While a turn works it is red with a square and a
+    // faint ring turning around it, and amber while the agent is asking a question, so
+    // the way to stop is never in doubt.
     private func primaryButton(state: SessionState, canSend: Bool) -> some View {
         let stopping = state == .stopping
         let busy = state.isBusy
+        let asking = runner.question(sessionID) != nil
+        let fill: Color = stopping ? Theme.field
+            : busy ? (asking ? Theme.attention : Theme.deletion)
+            : Theme.accentFill.opacity(canSend ? 1 : 0.45)
         return Button {
             if busy { runner.stop(sessionID) } else { send() }
         } label: {
             ZStack {
+                Circle().fill(fill)
                 if stopping {
-                    primaryGlyph("hourglass", size: 12, ink: .secondary, fill: Theme.field)
+                    Image(systemName: "hourglass")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.secondary)
                         .transition(.buttonSwap)
                 } else if busy {
-                    primaryGlyph("stop.fill", size: 12, ink: .white, fill: Theme.deletion)
+                    RoundedRectangle(cornerRadius: 2.5)
+                        .fill(.white)
+                        .frame(width: 10, height: 10)
                         .transition(.buttonSwap)
                 } else {
-                    primaryGlyph("arrow.up", size: 13, ink: .white,
-                                 fill: Color.black.opacity(canSend ? 0.88 : 0.22))
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
                         .transition(.buttonSwap)
                 }
             }
             .frame(width: 32, height: 32)
+            .overlay {
+                if busy && !stopping {
+                    TurnRing(colour: asking ? Theme.attention : Theme.deletion)
+                        .transition(.opacity)
+                }
+            }
             .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .disabled(stopping || (!busy && !canSend))
         .hoverLift(amount: Motion.smallLift)
+        .motion(Motion.control, value: busy)
+        .motion(Motion.control, value: asking)
+        .motion(Motion.hover, value: canSend)
         .accessibilityLabel(stopping ? "Stopping this turn" : busy ? "Stop this turn" : "Send prompt")
         .appTooltip(stopping ? "Stopping this turn"
                     : busy ? "Stop this turn (esc)"
                     : canSend ? "Send (shift-return for a new line)" : "")
-    }
-
-    private func primaryGlyph(_ symbol: String, size: CGFloat, ink: some ShapeStyle,
-                              fill: Color) -> some View {
-        Image(systemName: symbol)
-            .font(.system(size: size, weight: .bold))
-            .foregroundStyle(ink)
-            .frame(width: 32, height: 32)
-            .background(Circle().fill(fill))
     }
 
     // What is waiting to go out with the next prompt. Long file names are common, so the
@@ -255,6 +269,34 @@ struct Composer<Above: View, Accessory: View>: View {
                     sessionID: sessionID,
                     store: store)
         runner.clearDraft(sessionID)
+    }
+}
+
+// A faint arc turning around the stop button once every 1.4 seconds, so a working turn
+// reads as alive even with the transcript scrolled away. With motion turned down it holds
+// still and the colour and the square still say the turn is running.
+private struct TurnRing: View {
+    let colour: Color
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let lap = 1.4
+
+    var body: some View {
+        TimelineView(.animation(paused: reduceMotion)) { context in
+            let turn = context.date.timeIntervalSinceReferenceDate
+                .truncatingRemainder(dividingBy: Self.lap) / Self.lap
+            Circle()
+                .trim(from: 0, to: 0.3)
+                .stroke(AngularGradient(colors: [colour.opacity(0), colour.opacity(0.55)],
+                                        center: .center,
+                                        startAngle: .degrees(0), endAngle: .degrees(108)),
+                        lineWidth: 2)
+                .rotationEffect(.degrees(reduceMotion ? 0 : turn * 360))
+        }
+        .padding(-4)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

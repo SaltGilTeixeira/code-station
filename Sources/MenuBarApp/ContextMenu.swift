@@ -21,6 +21,8 @@ enum MenuEntry {
                      kind: MenuItem.Kind = .plain,
                      projectTint: Theme.ProjectTint? = nil,
                      icon: String? = nil,
+                     iconTint: Color? = nil,
+                     meter: Int? = nil,
                      image: NSImage? = nil,
                      imageShape: MenuItem.ImageShape = .circle,
                      checked: Bool = false,
@@ -33,7 +35,7 @@ enum MenuEntry {
                      detailColour: Color? = nil,
                      action: @escaping () -> Void) -> MenuEntry {
         .item(MenuItem(label: label, kind: kind, projectTint: projectTint,
-                       icon: icon, image: image,
+                       icon: icon, iconTint: iconTint, meter: meter, image: image,
                        imageShape: imageShape, checked: checked,
                        showsUpdate: showsUpdate,
                        badge: badge, badgeTint: badgeTint, subtitle: subtitle,
@@ -111,6 +113,12 @@ struct MenuItem {
     // An optional leading symbol for menus whose entries create different kinds of thing.
     // The host reserves the column for every row once one entry uses it.
     var icon: String?
+    // The icon's own colour, for a menu whose rows are told apart by colour as much as by
+    // name. Left out, the icon takes the accent like every other.
+    var iconTint: Color?
+    // An effort meter in place of an icon, lit up to this many of its four bars, so each
+    // level in an effort menu shows the same mark as the control that opened it.
+    var meter: Int?
     var image: NSImage?
     var imageShape: ImageShape = .circle
     // Marks the row that is currently in force, for menus that pick one of a set.
@@ -411,9 +419,9 @@ struct ContextMenuHost: View {
         }
         let hasChecks = items.contains(where: \.checked)
         let hasTints = items.contains { $0.projectTint != nil }
-        let hasIcons = items.contains { $0.icon != nil || $0.image != nil }
+        let hasIcons = items.contains { $0.icon != nil || $0.image != nil || $0.meter != nil }
         let hasCheckedIcons = items.contains {
-            $0.checked && ($0.icon != nil || $0.image != nil)
+            $0.checked && ($0.icon != nil || $0.image != nil || $0.meter != nil)
         }
         // A check and an icon share one slot unless a row needs to show both.
         let usesSharedMarkColumn = hasChecks && hasIcons && !hasCheckedIcons
@@ -862,10 +870,13 @@ private struct MenuItemRow: View {
                         .frame(width: 22, height: 22)
                 } else if let image = item.image {
                     menuImage(image)
+                } else if let meter = item.meter {
+                    EffortMeter(lit: meter, height: 12)
+                        .frame(width: 22, height: 22)
                 } else {
                     Image(systemName: item.icon ?? "square")
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
+                        .foregroundStyle(item.iconTint ?? Theme.accent)
                         .frame(width: 22, height: 22)
                         .opacity(item.icon == nil ? 0 : 1)
                 }
