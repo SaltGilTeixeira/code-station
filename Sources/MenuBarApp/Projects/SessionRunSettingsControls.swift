@@ -19,11 +19,9 @@ struct SessionRunSettingsControls: View {
             let agent = session.agent
             let layout = wraps ? AnyLayout(FlowRow(spacing: 10)) : AnyLayout(HStackLayout(spacing: 10))
             layout {
-                Text(agent.title)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
+                AgentPill(agent: agent)
                     .appTooltip("This session always runs on \(agent.title).")
+                    .accessibilityLabel("Agent: \(agent.title)")
                 modelControl(session, lastRan: session.usage?.model(for: agent))
                 effortControl(agent: agent)
                 switch agent {
@@ -250,6 +248,31 @@ struct SessionRunSettingsControls: View {
     }
 }
 
+// MARK: - Agent
+
+// The agent is fixed for the life of a session, so it sits on the same capsule as the
+// controls beside it but drawn as an outline, with no chevron and no answer to the pointer.
+private struct AgentPill: View {
+    let agent: AgentKind
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: agent.symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text(agent.title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+        .lineLimit(1)
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .overlay(Capsule().strokeBorder(Theme.border))
+        .contentShape(Capsule())
+        .fixedSize()
+    }
+}
+
 // MARK: - Model
 
 private struct ModelPill: View {
@@ -262,9 +285,6 @@ private struct ModelPill: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
                 RollingText(title, font: .system(size: 12, weight: .semibold))
-                Text("model")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
                 MenuChevron(size: 8)
             }
         }
@@ -335,9 +355,6 @@ private struct EffortPill: View {
                 EffortMeter(lit: lit)
                 RollingText(title, rising: lit >= (previous ?? lit),
                             font: .system(size: 12, weight: .semibold))
-                Text("effort")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.tertiary)
                 MenuChevron(size: 8)
             }
         }
