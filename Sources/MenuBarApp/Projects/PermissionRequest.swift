@@ -25,6 +25,8 @@ struct PermissionRequest: Identifiable, Equatable, Sendable {
     let suggestions: Data?
     let alwaysTitle: String?
     let questions: [AgentQuestion]
+    // When the turn stopped to ask, so Home can say how long it has been waiting.
+    var askedAt = Date()
 
     var isQuestion: Bool { !questions.isEmpty }
 }

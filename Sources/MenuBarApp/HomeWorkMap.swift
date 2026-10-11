@@ -2,6 +2,9 @@ import SwiftUI
 
 struct HomeLive: Identifiable {
     let session: ChatSession
+    // The conversation the runner holds for this row: the Design one while Design is the
+    // side working, which is also the one any question was asked from.
+    let liveID: UUID
     let containerName: String
     let tint: Theme.ProjectTint
     let avatar: SidebarAvatar
@@ -35,6 +38,20 @@ struct HomeLive: Identifiable {
         }
         return (tone == .idle ? "Resume session" : "Open session", destination)
     }
+
+    // The answers that can be given from Home without reading more than its card shows.
+    // A plan is a page to read and a question with many parts needs the full form, so
+    // those are answered in the session.
+    var quickAnswers: [(title: String, answer: PermissionAnswer)] {
+        guard let permission else { return [] }
+        if permission.isQuestion {
+            guard permission.questions.count == 1, let question = permission.questions.first,
+                  !question.multiSelect, question.options.count <= 3 else { return [] }
+            return question.options.map { ($0.label, .answers([question.text: $0.label])) }
+        }
+        guard !permission.subjectIsMarkdown else { return [] }
+        return [("Allow", .allowOnce), ("Deny", .deny)]
+    }
 }
 
 struct HomeWorkMap {
@@ -49,6 +66,7 @@ struct HomeWorkMap {
     var active: [HomeLive] { sessions.filter { $0.tone != .idle } }
     var waiting: [HomeLive] { active.filter(\.needsAttention) }
     var runningCount: Int { active.count { $0.tone == .running } }
+    var backgroundWaitCount: Int { active.count { $0.tone == .waiting } }
 
     // Which cards and rows are on the map, so the home page can animate when that changes.
     var shape: [[UUID]] { groups.map { [$0.id] + $0.sessions.map(\.id) } }
@@ -75,6 +93,7 @@ struct HomeWorkMap {
     private static func comesFirst(_ first: HomeLive, _ second: HomeLive) -> Bool {
         if (first.permission != nil) != (second.permission != nil) { return first.permission != nil }
         if first.needsAttention != second.needsAttention { return first.needsAttention }
+        if (first.tone == .running) != (second.tone == .running) { return first.tone == .running }
         if first.session.lastActivity != second.session.lastActivity {
             return first.session.lastActivity > second.session.lastActivity
         }
@@ -84,20 +103,22 @@ struct HomeWorkMap {
 
 struct HomeWorkMapView: View {
     let map: HomeWorkMap
-    let compact: Bool
-    let open: (HomeLive) -> Void
+    // The room the map has inside its card.
+    let width: CGFloat
+    let hasChanges: (HomeLive) -> Bool
+    let open: (HomeLive, SessionDestination) -> Void
+    let answer: (HomeLive, PermissionAnswer) -> Void
 
     static let reflow = Animation.smooth(duration: 0.3)
 
-    private var spatial: Bool {
-        !compact && !map.groups.isEmpty && map.groups.count <= 4
-            && map.groups.allSatisfy { $0.sessions.count <= 4 }
-    }
+    private var orbit: Bool { width >= OrbitLayout.minWidth }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             heading
-            if map.active.isEmpty {
+            if orbit {
+                OrbitMap(map: map, width: width, hasChanges: hasChanges, open: open, answer: answer)
+            } else if map.active.isEmpty {
                 HStack(spacing: 14) {
                     Image(systemName: "circle.grid.cross")
                         .font(.system(size: 22, weight: .light))
@@ -112,8 +133,6 @@ struct HomeWorkMapView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
-            } else if spatial {
-                spatialMap
             } else {
                 HStack(spacing: 8) {
                     Text("\(map.runningCount)").font(.serif(28))
@@ -146,71 +165,18 @@ struct HomeWorkMapView: View {
     }
 
     private var heading: some View {
-        Label("Your work map", systemImage: "square.grid.2x2")
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Theme.accent)
-    }
-
-    private var spatialMap: some View {
-        let groups = map.groups
-        let left = Array(groups.prefix(groups.count == 4 ? 2 : 1))
-        let right = Array(groups.dropFirst(left.count))
-        return HStack(spacing: 22) {
-            column(left)
-            VStack(spacing: 22) {
-                VStack(spacing: 5) {
-                    Text("\(map.runningCount)").font(.serif(48, .medium))
-                    Text("sessions working").font(.system(size: 11))
-                    Circle().fill(map.runningCount > 0 ? Theme.addition : Theme.dotOff)
-                        .frame(width: 5, height: 5)
-                }
+        HStack {
+            Label("Your work map", systemImage: "square.grid.2x2")
+                .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.accent)
-                .frame(width: 126, height: 126)
-                .background(Circle().fill(Theme.card))
-                .overlay(Circle().stroke(Theme.accent.opacity(0.3)))
-                .padding(8)
-                .background(Circle().fill(Theme.accent.opacity(0.06)))
-                .overlay(Circle().stroke(Theme.accent.opacity(0.15)))
-                .anchorPreference(key: MapAnchors.self, value: .bounds) { [.hub: $0] }
-                Text("Across \(map.containerSummary)")
-                    .font(.system(size: 10.5))
+            Spacer(minLength: 12)
+            if !map.active.isEmpty {
+                Text("\(counted(map.active.count, "session")) across \(map.containerSummary)")
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(width: 142)
-            if !right.isEmpty { column(right) }
-        }
-        .backgroundPreferenceValue(MapAnchors.self) { anchors in
-            GeometryReader { geometry in
-                if let hub = anchors[.hub] {
-                    let center = geometry[hub]
-                    ForEach(groups) { group in
-                        if let anchor = anchors[.group(group.id)] {
-                            let rect = geometry[anchor]
-                            let isLeft = rect.midX < center.midX
-                            MapConnector(start: CGPoint(x: isLeft ? center.minX : center.maxX, y: center.midY),
-                                         end: CGPoint(x: isLeft ? rect.maxX : rect.minX, y: rect.midY))
-                                .stroke(Theme.accent.opacity(0.3), lineWidth: 1.3)
-                        }
-                    }
-                }
-            }
-            // The anchors already hold where the cards end up, so without this the lines
-            // would jump there while the cards are still moving.
-            .animation(Self.reflow, value: map.shape)
-            .accessibilityHidden(true)
-        }
-    }
-
-    private func column(_ groups: [HomeWorkMap.Group]) -> some View {
-        VStack(spacing: 24) {
-            ForEach(groups) { group in
-                groupCard(group)
-                    .anchorPreference(key: MapAnchors.self, value: .bounds) { [.group(group.id): $0] }
+                    .lineLimit(1)
             }
         }
-        .frame(maxWidth: .infinity)
     }
 
     private func groupCard(_ group: HomeWorkMap.Group) -> some View {
@@ -228,7 +194,9 @@ struct HomeWorkMapView: View {
             .padding(12)
             ForEach(group.sessions) { live in
                 Rectangle().fill(Theme.hairline).frame(height: 1)
-                HomeMapSessionRow(live: live) { open(live) }
+                HomeMapSessionRow(live: live) {
+                    open(live, live.primaryAction(hasChanges: hasChanges(live)).destination)
+                }
             }
         }
         .cardSurface(cornerRadius: 12)
@@ -237,15 +205,7 @@ struct HomeWorkMapView: View {
     }
 }
 
-private struct MapAnchors: PreferenceKey {
-    enum Key: Hashable { case hub, group(UUID) }
-    static var defaultValue: [Key: Anchor<CGRect>] { [:] }
-    static func reduce(value: inout [Key: Anchor<CGRect>], nextValue: () -> [Key: Anchor<CGRect>]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-    }
-}
-
-private struct MapConnector: Shape {
+struct MapConnector: Shape {
     var start: CGPoint
     var end: CGPoint
 

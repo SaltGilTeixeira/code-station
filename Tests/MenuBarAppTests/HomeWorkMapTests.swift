@@ -9,7 +9,7 @@ struct HomeWorkMapTests {
                       destination: SessionDestination = .conversation) -> HomeLive {
         var session = ChatSession(projectID: project, agent: .codex)
         session.workspaceID = workspace
-        return HomeLive(session: session, containerName: name,
+        return HomeLive(session: session, liveID: session.id, containerName: name,
                         tint: Theme.projectTint(for: name),
                         avatar: SidebarAvatar(subject: workspace == nil ? .project : .workspace,
                                               id: workspace ?? project),
@@ -64,5 +64,125 @@ struct HomeWorkMapTests {
         #expect(design.primaryAction(hasChanges: true).destination == .design)
         let designReview = live(tone: .needsYou, finished: true, destination: .design)
         #expect(designReview.primaryAction(hasChanges: true).destination == .design)
+    }
+
+    @Test func sortsSessionsByWhoNeedsYouThenWhatIsRunning() {
+        let project = UUID()
+        let waiting = live(project: project, tone: .waiting)
+        let running = live(project: project, tone: .running)
+        let needs = live(project: project, tone: .needsYou)
+        let map = HomeWorkMap(sessions: [waiting, running, needs])
+        #expect(map.groups[0].sessions.map(\.id) == [needs.id, running.id, waiting.id])
+        #expect(map.backgroundWaitCount == 1)
+    }
+
+    @Test func offersQuickAnswersOnlyForShortRequests() {
+        let allow = live(tone: .needsYou, permission: permission)
+        #expect(allow.quickAnswers.map(\.title) == ["Allow", "Deny"])
+        #expect(allow.quickAnswers.map(\.answer) == [.allowOnce, .deny])
+
+        var plan = permission
+        plan.subjectIsMarkdown = true
+        #expect(live(tone: .needsYou, permission: plan).quickAnswers.isEmpty)
+
+        let question = AgentQuestion(id: 0, header: "", text: "Keep the hub?", multiSelect: false,
+                                     options: [.init(id: 0, label: "Keep it", description: ""),
+                                               .init(id: 1, label: "Replace it", description: "")])
+        let asked = live(tone: .needsYou, permission: request(questions: [question]))
+        #expect(asked.quickAnswers.map(\.title) == ["Keep it", "Replace it"])
+        #expect(asked.quickAnswers.first?.answer == .answers(["Keep the hub?": "Keep it"]))
+
+        let several = AgentQuestion(id: 0, header: "", text: "Which?", multiSelect: true,
+                                    options: question.options)
+        #expect(live(tone: .needsYou, permission: request(questions: [several])).quickAnswers.isEmpty)
+        #expect(live(tone: .needsYou, permission: request(questions: [question, question]))
+            .quickAnswers.isEmpty)
+        #expect(live(tone: .needsYou, finished: true).quickAnswers.isEmpty)
+    }
+
+    @Test func orbitLaysOutABusyDayWithoutOverlaps() {
+        var sessions: [HomeLive] = []
+        let counts = [3, 2, 2, 1, 2, 1, 1]
+        for (index, count) in counts.enumerated() {
+            let project = UUID()
+            for slot in 0..<count {
+                sessions.append(live(project: project, name: "Project \(index)",
+                                     tone: slot == 0 && index.isMultiple(of: 2) ? .needsYou : .running))
+            }
+        }
+        #expect(sessions.count == 12)
+        for width in [OrbitLayout.minWidth, 1000, 1400] {
+            expectNoOverlaps(OrbitLayout(map: HomeWorkMap(sessions: sessions), width: width))
+        }
+    }
+
+    private func expectNoOverlaps(_ layout: OrbitLayout) {
+        let width = layout.size.width
+
+        #expect(layout.nodes.count == 7)
+        #expect(layout.pills.count == 12)
+        let hub = CGRect(x: layout.hub.x - OrbitLayout.hubSide / 2, y: layout.hub.y - OrbitLayout.hubSide / 2,
+                         width: OrbitLayout.hubSide, height: OrbitLayout.hubSide)
+        let tiles = layout.nodes.map {
+            CGRect(x: $0.center.x - 30, y: $0.center.y - 30, width: 60, height: 76)
+        }
+        let shapes = layout.pills.map(\.frame) + tiles + [hub]
+        for (index, shape) in shapes.enumerated() {
+            #expect(shape.minX >= 0 && shape.maxX <= width && shape.minY >= 0
+                    && shape.maxY <= layout.size.height)
+            for other in shapes[(index + 1)...] {
+                #expect(!shape.intersects(other))
+            }
+        }
+    }
+
+    @Test func orbitGrowsTallerInsteadOfSqueezingAColumn() {
+        var sessions: [HomeLive] = []
+        for index in 0..<8 {
+            let project = UUID()
+            sessions += (0..<3).map { _ in live(project: project, name: "P\(index)", tone: .needsYou) }
+        }
+        let layout = OrbitLayout(map: HomeWorkMap(sessions: sessions), width: 1000)
+        #expect(layout.size.height > OrbitLayout.minHeight)
+        let frames = layout.pills.map(\.frame)
+        for (index, frame) in frames.enumerated() {
+            #expect(frame.height == OrbitLayout.tallPillHeight)
+            for other in frames[(index + 1)...] { #expect(!frame.intersects(other)) }
+        }
+    }
+
+    @Test func orbitFoldsSessionsPastThreeIntoAChip() {
+        let project = UUID()
+        let sessions = (0..<5).map { _ in live(project: project, name: "Busy") }
+        let layout = OrbitLayout(map: HomeWorkMap(sessions: sessions), width: 1000)
+        #expect(layout.pills.count == OrbitLayout.shownPerProject)
+        #expect(layout.more.map(\.count) == [2])
+        #expect(layout.more[0].frame.minY > layout.pills.map(\.frame.maxY).max() ?? 0)
+    }
+
+    @Test func orbitWiresFollowTheStateOfWhatTheyLeadTo() {
+        let project = UUID()
+        let needs = live(project: project, tone: .needsYou)
+        let running = live(project: project)
+        let waiting = live(tone: .waiting)
+        let layout = OrbitLayout(map: HomeWorkMap(sessions: [needs, running, waiting]), width: 1000)
+        let kinds = Dictionary(uniqueKeysWithValues: layout.wires.map { ($0.id, $0.kind) })
+        #expect(kinds["hub:\(project)"] == .attention)
+        #expect(kinds["session:\(needs.id)"] == .attention)
+        #expect(kinds["session:\(running.id)"] == .running)
+        #expect(kinds["session:\(waiting.id)"] == .quiet)
+        #expect(layout.pills.first { $0.id == needs.id }?.frame.height == OrbitLayout.tallPillHeight)
+    }
+
+    @Test func emptyOrbitKeepsOnlyTheHub() {
+        let layout = OrbitLayout(map: HomeWorkMap(sessions: [live(tone: .idle)]), width: 1000)
+        #expect(layout.nodes.isEmpty && layout.pills.isEmpty && layout.wires.isEmpty)
+        #expect(layout.size.height == OrbitLayout.emptyHeight)
+    }
+
+    private func request(questions: [AgentQuestion]) -> PermissionRequest {
+        PermissionRequest(id: "question", toolName: "AskUserQuestion", title: "Question",
+                          subject: "", detail: "", input: Data(), suggestions: nil,
+                          alwaysTitle: nil, questions: questions)
     }
 }

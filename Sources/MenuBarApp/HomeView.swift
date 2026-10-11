@@ -77,16 +77,20 @@ struct HomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     introduction(map)
+                    // The page's padding and the card's own come off the width.
                     HomeWorkMapView(map: map,
-                                    compact: geometry.size.width - 48 < 650) { live in
-                        open(live)
-                    }
+                                    width: geometry.size.width - 48 - 40,
+                                    hasChanges: { hasChanges(in: $0.session) },
+                                    open: { live, destination in
+                                        store.selectSession(live.id, destination: destination)
+                                    },
+                                    answer: answer)
                     timeSpent(standing)
                     dailyTotals(standing)
                     resume(standing)
                     if !oldSessions.isEmpty { cleanup() }
                 }
-                .animation(HomeWorkMapView.reflow, value: map.shape)
+                .motion(HomeWorkMapView.reflow, value: map.shape)
                 .padding(24)
             }
         }
@@ -104,6 +108,12 @@ struct HomeView: View {
     private func open(_ live: HomeLive) {
         let destination = live.primaryAction(hasChanges: hasChanges(in: live.session)).destination
         store.selectSession(live.id, destination: destination)
+    }
+
+    // Answered from Home exactly as the session's own card would answer it.
+    private func answer(_ live: HomeLive, _ answer: PermissionAnswer) {
+        guard let request = live.permission else { return }
+        runner.answer(request, with: answer, sessionID: live.liveID, store: store)
     }
 
     private func dailyTotals(_ standing: Standing) -> some View {
@@ -319,6 +329,7 @@ struct HomeView: View {
         let checkouts = store.checkoutProjects(for: session)
         return HomeLive(
             session: session,
+            liveID: live.id,
             containerName: identity.name,
             tint: identity.tint,
             avatar: identity.avatar,
