@@ -6,8 +6,7 @@ import SwiftUI
 // rather than on a strip of their own. They belong there because running the tests for
 // what was just written is the next thing that happens as much as sending another prompt
 // is. A command run here uses this session's worktree, so the tests it runs are the tests
-// for the branch this session is on. A saved prompt is sent as though it had been typed,
-// so a session already working queues it behind the turn it is on.
+// for the branch this session is on.
 //
 // Every checkout's shortcuts are here at once. A session with several of them tints each
 // chip with its project, rather than making the reader switch, since a command saved
@@ -15,14 +14,8 @@ import SwiftUI
 struct SessionShortcutChips: View {
     @Environment(ShortcutStore.self) private var shortcuts
     @Environment(ProjectStore.self) private var store
-    @Environment(SessionRunner.self) private var runner
 
     let session: ChatSession
-    // The conversation a prompt lands in. A Design tab runs a conversation of its own, so
-    // what is on screen is not always the session's own.
-    let conversationID: UUID
-    // False when the session cannot take a prompt, such as when its folder has gone.
-    let offersPrompts: Bool
     let edit: (ShortcutEditorRequest) -> Void
 
     // The width the rest of the run-choices row left for the commands, which is what the
@@ -110,17 +103,10 @@ struct SessionShortcutChips: View {
             state: shortcuts.state(run),
             tint: checkouts.count > 1 ? Theme.projectTint(for: entry.project?.name ?? "") : nil,
             open: shortcuts.output(for: scope) == run,
-            activate: { activate(shortcut, run) }
+            activate: { activate(run) }
         )
         .appContextMenu {
-            var entries: [MenuEntry] = shortcut.kind == .prompt ? [
-                .item("Send", action: { send(shortcut) }),
-                .item("Edit", action: {
-                    edit(ShortcutEditorRequest(shortcut: shortcut,
-                                               projectID: entry.checkout.projectID,
-                                               projectName: entry.project?.name))
-                })
-            ] : [
+            var entries: [MenuEntry] = [
                 shortcuts.state(run).isActive
                     ? .item("Stop", action: { toggle(run) })
                     : .item("Run", action: { toggle(run) }),
@@ -174,10 +160,10 @@ struct SessionShortcutChips: View {
                             ? Theme.projectTint(for: entry.project?.name ?? "") : nil,
                          icon: shortcut.glyph,
                          subtitle: shortcut.text,
-                         monospacedSubtitle: shortcut.kind == .command,
+                         monospacedSubtitle: true,
                          detail: Self.detail(for: state),
                          detailColour: Self.detailColour(for: state),
-                         action: { shortcut.kind == .prompt ? send(shortcut) : toggle(run) })
+                         action: { toggle(run) })
         }
         // Never a dead end: the place the commands went is also a place to save another.
         menu.append(.separator)
@@ -212,18 +198,13 @@ struct SessionShortcutChips: View {
             .overlay(RoundedRectangle(cornerRadius: 7)
                 .strokeBorder(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
             .appMenu { newMenu }
-            .appTooltip("Save a command or a prompt for this project")
+            .appTooltip("Save a command for this project")
             .accessibilityLabel("New shortcut")
     }
 
     private var newMenu: [MenuEntry] {
         var entries: [MenuEntry] = [
-            .item("New command…", action: { edit(blankRequest) }),
-            .item("New prompt…", action: {
-                var request = blankRequest
-                request.kind = .prompt
-                edit(request)
-            })
+            .item("New command…", action: { edit(blankRequest) })
         ]
         // The command the agent just ran is the one most worth keeping, and it has
         // already been typed once.
@@ -260,8 +241,7 @@ struct SessionShortcutChips: View {
     }
 
     private var placements: [ShortcutPlacement] {
-        shortcuts.shortcuts(for: checkouts.map(\.checkout.projectID),
-                            kind: offersPrompts ? nil : .command)
+        shortcuts.shortcuts(for: checkouts.map(\.checkout.projectID))
     }
 
     private func checkout(with projectID: UUID) -> Checkout? {
@@ -285,18 +265,12 @@ struct SessionShortcutChips: View {
     // While a command runs, the chip is the way back to what it is printing, not the
     // way to kill it. Stopping is the rarer of the two and stays in the chip's menu and
     // in the drawer the output opens in.
-    private func activate(_ shortcut: Shortcut, _ run: ShortcutRun) {
-        if shortcut.kind == .prompt {
-            send(shortcut)
-        } else if shortcuts.state(run).isActive {
+    private func activate(_ run: ShortcutRun) {
+        if shortcuts.state(run).isActive {
             shortcuts.showOutput(run, for: scope)
         } else {
             toggle(run)
         }
-    }
-
-    private func send(_ shortcut: Shortcut) {
-        runner.send(shortcut.text, sessionID: conversationID, store: store)
     }
 
     private func toggle(_ run: ShortcutRun) {
@@ -370,8 +344,7 @@ struct ShortcutChip: View {
         .buttonStyle(.plain)
         .hoverLift(hovering)
         .onHover { hovering = $0 }
-        .accessibilityLabel(shortcut.kind == .prompt ? "Send \(shortcut.name)"
-            : state.isActive ? "Show the output of \(shortcut.name)"
+        .accessibilityLabel(state.isActive ? "Show the output of \(shortcut.name)"
             : "Run \(shortcut.name)")
         .appTooltip {
             Tooltip(title: tooltip, subtitle: shortcut.text,
@@ -399,7 +372,6 @@ struct ShortcutChip: View {
     }
 
     private var tooltip: String {
-        if shortcut.kind == .prompt { return "Send \(shortcut.name)" }
         return switch state {
         case .stopped: "Run \(shortcut.name)"
         case .running(let since):

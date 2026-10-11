@@ -348,15 +348,7 @@ struct SessionView: View {
             }
             .sheet(item: $shortcutEditor) { request in
                 ShortcutEditorView(request: request) { shortcut in
-                    if request.shortcut == nil {
-                        shortcuts.add(name: shortcut.name, text: shortcut.text,
-                                      kind: shortcut.kind,
-                                      icon: shortcut.icon,
-                                      projectID: shortcut.projectID,
-                                      availableInAllProjects: shortcut.availableInAllProjects)
-                    } else {
-                        shortcuts.update(shortcut)
-                    }
+                    shortcuts.saveShortcut(shortcut)
                 }
                 .appOverlays()
             }
@@ -2004,7 +1996,7 @@ struct SessionView: View {
     // controls. What the session has done and where belongs on the status strip, not
     // here - this line is only ever about what happens next.
     //
-    // The saved commands and prompts sit at the end of it for the same reason. Running the tests for
+    // The saved commands sit at the end of it for the same reason. Running the tests for
     // what was just written is the next thing that happens as much as sending another
     // prompt is, and docking them here keeps them off a status strip that has to stay one
     // glance wide however many commands a project collects.
@@ -2022,9 +2014,6 @@ struct SessionView: View {
                 // and fit themselves to whatever is left of it once there are more of
                 // them than it can hold.
                 SessionShortcutChips(session: session,
-                                     conversationID: visibleConversationID,
-                                     offersPrompts: !promptsBlocked(session: session,
-                                                                    project: project),
                                      edit: { shortcutEditor = $0 })
                     .frame(maxWidth: .infinity, alignment: .trailing)
             } else {

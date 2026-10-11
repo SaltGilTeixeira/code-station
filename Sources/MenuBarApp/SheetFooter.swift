@@ -30,6 +30,8 @@ struct SheetFooter<Leading: View>: View {
     private let primary: SheetAction?
     private let secondary: SheetAction?
     private let dismissTitle: String?
+    private let dismissTone: ButtonTone
+    private let primaryLast: Bool
     private let dismiss: () -> Void
     private let leading: Leading
 
@@ -37,12 +39,16 @@ struct SheetFooter<Leading: View>: View {
          primary: SheetAction? = nil,
          secondary: SheetAction? = nil,
          dismissTitle: String? = nil,
+         dismissTone: ButtonTone = .dark,
+         primaryLast: Bool = false,
          dismiss: @escaping () -> Void,
          @ViewBuilder leading: () -> Leading) {
         self.title = title
         self.primary = primary
         self.secondary = secondary
         self.dismissTitle = dismissTitle
+        self.dismissTone = dismissTone
+        self.primaryLast = primaryLast
         self.dismiss = dismiss
         self.leading = leading()
     }
@@ -65,6 +71,7 @@ struct SheetFooter<Leading: View>: View {
                                  keyboardShortcut: secondary.shortcut, action: secondary.action)
                         .disabled(!secondary.enabled)
                 }
+                if primaryLast { dismissButton }
                 if let primary {
                     ActionButton(title: primary.title, tone: primary.tone ?? .green, size: 13,
                                  icon: primary.icon, keyboardShortcut: primary.shortcut,
@@ -82,14 +89,17 @@ struct SheetFooter<Leading: View>: View {
                         }
                         .disabled(!primary.enabled)
                 }
-                ActionButton(title: dismissTitle ?? (primary == nil && secondary == nil
-                                                     ? "Done" : "Cancel"),
-                             size: 13, keyboardShortcut: .cancelAction, action: dismiss)
+                if !primaryLast { dismissButton }
             }
             .padding(.horizontal, horizontalInset)
             .padding(.vertical, verticalInset)
             .background(Theme.card)
         }
+    }
+
+    private var dismissButton: some View {
+        ActionButton(title: dismissTitle ?? (primary == nil && secondary == nil ? "Done" : "Cancel"),
+                     tone: dismissTone, size: 13, keyboardShortcut: .cancelAction, action: dismiss)
     }
 
     private func controlTwin(_ shortcut: KeyboardShortcut) -> KeyboardShortcut? {

@@ -14,6 +14,7 @@ enum MenuEntry {
     case item(MenuItem)
     case searchable(SearchableMenuItems)
     case cards([MenuCardItem])
+    case icons([MenuItem])
     case separator
 
     static func item(_ label: String,
@@ -404,6 +405,7 @@ struct ContextMenuHost: View {
             switch entry {
             case .item(let item): [item]
             case .searchable(let searchable): searchable.items
+            case .icons(let icons): icons
             case .cards, .separator: []
             }
         }
@@ -455,6 +457,8 @@ struct ContextMenuHost: View {
                 case .cards(let items):
                     MenuCardGrid(items: items) { presenter.run($0) }
                         .transition(.fadeIn)
+                case .icons(let items):
+                    MenuIconGrid(items: items) { presenter.run($0) }
                 case .separator:
                     Divider()
                         .overlay(Theme.hairline)
@@ -466,8 +470,19 @@ struct ContextMenuHost: View {
         }
         .padding(.vertical, 6)
         .onAppear {
-            guard presenter.entries.allSatisfy({ if case .item = $0 { return true }; return false }) else { return }
-            focusedItem = presenter.entries.firstIndex { if case .item(let item) = $0 { return item.checked }; return false } ?? 0
+            guard presenter.entries.allSatisfy({
+                switch $0 {
+                case .item, .separator: true
+                default: false
+                }
+            }) else { return }
+            focusedItem = presenter.entries.firstIndex {
+                if case .item(let item) = $0 { return item.checked && item.handler != nil }
+                return false
+            } ?? presenter.entries.firstIndex {
+                if case .item(let item) = $0 { return item.handler != nil }
+                return false
+            }
         }
         .onKeyPress(keys: [.upArrow, .downArrow, .home, .end]) { press in
             let indices = presenter.entries.indices.filter {
@@ -496,6 +511,43 @@ struct ContextMenuHost: View {
         presenter.verticalAttachment.y(originY: presenter.origin.y,
                                        menuHeight: size.height,
                                        boundsHeight: bounds.height)
+    }
+}
+
+private struct MenuIconGrid: View {
+    let items: [MenuItem]
+    let action: (MenuItem) -> Void
+    @FocusState private var focused: Int?
+
+    var body: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.fixed(36), spacing: 5), count: 6), spacing: 5) {
+            ForEach(items.indices, id: \.self) { index in
+                let item = items[index]
+                Button { action(item) } label: {
+                    Image(systemName: item.icon ?? "slash.circle")
+                        .font(.system(size: 15))
+                        .foregroundStyle(item.checked ? .white : Theme.accent)
+                        .frame(width: 36, height: 36)
+                        .surface(item.checked ? Theme.accentFill : Theme.field, cornerRadius: 7,
+                                 border: focused == index ? Theme.accent : .clear)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focused($focused, equals: index)
+                .accessibilityLabel(item.label)
+                .accessibilityAddTraits(item.checked ? .isSelected : [])
+                .appTooltip(item.label)
+            }
+        }
+        .padding(8)
+        .onAppear { focused = items.firstIndex(where: \.checked) ?? 0 }
+        .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in
+            guard !items.isEmpty else { return .ignored }
+            let step = press.key == .upArrow ? -6 : press.key == .downArrow ? 6
+                : press.key == .leftArrow ? -1 : 1
+            focused = ((focused ?? 0) + step + items.count) % items.count
+            return .handled
+        }
     }
 }
 

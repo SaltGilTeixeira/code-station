@@ -1,368 +1,468 @@
+import AppKit
 import SwiftUI
 
-// The shortcuts saved against this Mac. Commands run from the home folder here, and the
-// ones marked for all projects also appear in each project's folder and session
-// worktrees. Shortcuts owned by one project stay with the sessions that use them.
-//
-// A prompt has no folder and no output, so it is listed and edited here but only ever
-// sent from a session, where there is a conversation to send it to.
 struct ShortcutsView: View {
     @Environment(ShortcutStore.self) private var store
     @Environment(DialogPresenter.self) private var dialogs
     @Environment(\.dismiss) private var dismiss
-
-    @State private var selectedID: Shortcut.ID?
-    @State private var editor: ShortcutEditorRequest?
+    @State private var draft: ShortcutDraft?
+    @State private var query = ""
+    @State private var saveStatus = ""
+    @State private var sheetWidth: CGFloat = 1184
 
     private var shortcuts: [Shortcut] { store.macShortcuts }
+    private var matches: [Shortcut] { store.libraryShortcuts(query: query) }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            content
-            SheetFooter { dismiss() }
-        }
-        .frame(width: 700, height: 620)
-        .background(Theme.background)
-        .onAppear { selectAvailableShortcut() }
-        .onChange(of: shortcuts.map(\.id)) { _, _ in selectAvailableShortcut() }
-        .sheet(item: $editor) { request in
-            ShortcutEditorView(request: request) { shortcut in
-                if request.shortcut == nil {
-                    if let id = store.add(
-                        name: shortcut.name,
-                        text: shortcut.text,
-                        kind: shortcut.kind,
-                        icon: shortcut.icon,
-                        availableInAllProjects: shortcut.availableInAllProjects
-                    ) {
-                        selectedID = id
-                    }
-                } else {
-                    store.update(shortcut)
-                    selectedID = shortcut.id
+            if let error = store.loadError ?? store.saveError {
+                WarningStrip(error, icon: "externaldrive.badge.exclamationmark")
+            }
+            GeometryReader { geometry in
+                let narrow = geometry.size.width < 720
+                let layout = narrow ? AnyLayout(VStackLayout(spacing: 0))
+                                    : AnyLayout(HStackLayout(spacing: 0))
+                layout {
+                    library
+                        .frame(width: narrow ? nil : (geometry.size.width < 1000 ? 310 : 348),
+                               height: narrow ? min(380, max(300, geometry.size.height * 0.5)) : nil)
+                    Divider().overlay(Theme.hairline)
+                    editor
                 }
             }
-            .appOverlays()
+        }
+        .frame(minWidth: 390, idealWidth: 1184, maxWidth: 1184,
+               minHeight: 400, idealHeight: 780, maxHeight: 780)
+        .background(Theme.background)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sheetWidth = $0 }
+        .interactiveDismissDisabled(draft?.isDirty == true)
+        .onAppear {
+            if draft == nil {
+                if let first = matches.first { select(first) }
+                else { add() }
+            }
         }
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Shortcuts").font(.serif(18))
-                Text(headerDetail)
-                    .font(.system(size: 11))
+        HStack(spacing: 16) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Shortcuts").font(.serif(sheetWidth < 720 ? 26 : 32, .semibold))
+                    .lineLimit(1)
+                    .fixedSize()
+                Text("\(shortcuts.count) saved on this Mac · \(shortcuts.count(where: \.availableInAllProjects)) available in all projects")
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
-            ActionButton(title: "Add shortcut", tone: .green, height: 28, size: 12, icon: "plus") {
-                editor = ShortcutEditorRequest()
+            Spacer(minLength: 0)
+            ActionButton(title: sheetWidth < 720 ? "Add" : "Add shortcut", tone: .green, height: 38, size: 12, icon: "plus") {
+                guardChanges { add() }
             }
-            .appContextMenu {
-                ShortcutKind.allCases.map { kind in
-                    .item("New \(kind.payloadName)…",
-                          action: { editor = ShortcutEditorRequest(kind: kind) })
-                }
+            .accessibilityLabel("Add shortcut")
+            GlyphButton(icon: "xmark", side: 32, tint: .secondary) {
+                guardChanges { dismiss() }
             }
+            .accessibilityLabel("Close shortcuts")
         }
-        .padding(.horizontal, 20)
-        .headerBand()
+        .padding(.horizontal, sheetWidth < 720 ? 20 : 28)
+        .padding(.vertical, 22)
+        .background(Theme.card)
+        .overlay(alignment: .bottom) { Divider().overlay(Theme.hairline) }
     }
 
-    // The heading says whose these are and calls out how many also appear in projects.
-    // The count goes on the same line, since both are about the same list.
-    private var headerDetail: String {
-        let running = store.runningCount(of: shortcuts)
-        let count = running > 0 ? "\(running) running" : "\(shortcuts.count) saved"
-        let shared = shortcuts.count(where: \.availableInAllProjects)
-        if shared > 0 {
-            return "\(count) on this Mac · \(shared) available in all projects"
-        }
-        return "\(count) on this Mac"
-    }
-
-    private var content: some View {
+    private var library: some View {
         VStack(spacing: 0) {
-            if let error = store.loadError ?? store.saveError {
-                WarningStrip(error, icon: "externaldrive.badge.exclamationmark")
-            }
-            shortcutList
-            Divider().overlay(Theme.hairline)
-            output
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    @ViewBuilder private var shortcutList: some View {
-        if shortcuts.isEmpty {
-            PaneMessage(
-                icon: "bolt.slash",
-                title: "No shortcuts saved",
-                detail: "Add a shell command to run without leaving the app, "
-                    + "or a prompt to send a session in one click."
-            )
-            .frame(height: 220)
-        } else {
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(shortcuts) { shortcut in
-                        ShortcutRow(
-                            shortcut: shortcut,
-                            state: store.state(run(for: shortcut)),
-                            selected: selectedID == shortcut.id,
-                            select: { selectedID = shortcut.id },
-                            run: { toggle(shortcut) },
-                            edit: { editor = ShortcutEditorRequest(shortcut: shortcut) },
-                            remove: { confirmRemoval(of: shortcut) }
-                        )
-                        .appContextMenu { contextMenu(for: shortcut) }
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("Find a shortcut", text: $query)
+                        .textFieldStyle(.plain)
+                        .accessibilityLabel("Find a shortcut")
+                    if !query.isEmpty {
+                        GlyphButton(icon: "xmark.circle.fill", side: 32, tint: .secondary) { query = "" }
+                            .accessibilityLabel("Clear search")
                     }
                 }
-                .padding(20)
+                .font(.system(size: 12))
+                .padding(.leading, 11)
+                .padding(.trailing, 5)
+                .frame(height: 37)
+                .fieldSurface(cornerRadius: 8)
+                Label(shortcuts.contains(where: \.favorite) ? "Favorites first" : "Star shortcuts to keep them first",
+                      systemImage: "star")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
             }
-            .frame(height: 250)
+            .padding(20)
+            ShortcutLibraryList(shortcuts: matches, selectedID: draft?.isNew == false ? draft?.value.id : nil,
+                                isEmptyLibrary: shortcuts.isEmpty,
+                                select: { shortcut in guardChanges { select(shortcut) } },
+                                favorite: { shortcut in
+                                    if store.toggleFavorite(shortcut.id) {
+                                        let message = "\(shortcut.name) \(shortcut.favorite ? "removed from" : "added to") favorites"
+                                        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                                                             userInfo: [.announcement: message, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+                                    }
+                                })
         }
+        .background(Theme.sidebar)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Saved shortcuts")
     }
 
-    private var output: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                SectionLabel("OUTPUT")
-                if let selected {
-                    Text(selected.name)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-                Spacer()
-                if let selectedRun, !store.log(selectedRun).isEmpty {
-                    InlineLink(title: "Clear", size: 11) { store.clearLog(selectedRun) }
-                }
-            }
-
-            ScrollViewReader { scroller in
+    @ViewBuilder private var editor: some View {
+        if let draft {
+            VStack(spacing: 0) {
                 ScrollView {
-                    Text(outputText)
-                        .font(.mono(10.5))
-                        .foregroundStyle(outputIsPlaceholder ? AnyShapeStyle(.secondary)
-                                                             : AnyShapeStyle(.primary))
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                    Color.clear.frame(height: 1).id(Self.outputBottom)
+                    ShortcutEditorForm(draft: draft, locked: store.isRunningAnywhere(draft.value.id),
+                                       showsCommandOutput: true) {
+                        ShortcutCommandOutput(shortcut: store.shortcut(draft.value.id),
+                                              canRun: !draft.isDirty && !draft.isNew)
+                    }
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 25)
                 }
-                .onChange(of: selectedLog) { _, _ in
-                    scroller.scrollTo(Self.outputBottom, anchor: .bottom)
-                }
+                .id(draft.value.id)
+                footer(draft)
             }
-            .cardSurface(cornerRadius: 10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private var selected: Shortcut? {
-        shortcuts.first { $0.id == selectedID }
-    }
-
-    private var selectedRun: ShortcutRun? {
-        selected.map(run)
-    }
-
-    private var selectedLog: String {
-        selectedRun.map(store.log) ?? ""
-    }
-
-    private var outputText: String {
-        if selected?.kind == .prompt {
-            return "A prompt has no output of its own. Send it from the chips beside a "
-                + "session's composer and the answer arrives in that conversation."
+    private func footer(_ draft: ShortcutDraft) -> some View {
+        SheetFooter(primary: SheetAction(title: draft.isNew ? "Add shortcut" : "Save shortcut",
+                                         enabled: draft.canSave && !store.isRunningAnywhere(draft.value.id),
+                                         shortcut: KeyboardShortcut("s"), action: { _ = save() }),
+                    dismissTone: .outlined, primaryLast: true,
+                    dismiss: {
+                        if draft.isNew, let first = matches.first { select(first) }
+                        else { draft.reset(); saveStatus = "" }
+                    }) {
+            if !draft.isNew {
+                Button { remove(draft) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "trash")
+                        if sheetWidth >= 720 { Text("Remove shortcut") }
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 32, minHeight: 32)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Remove shortcut")
+            }
+            Text(draft.isDirty ? "Unsaved changes" : saveStatus)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
-        guard let selectedRun else { return "Select a shortcut to see its output." }
-        let log = store.log(selectedRun)
+    }
+
+    private func select(_ shortcut: Shortcut) {
+        draft = ShortcutDraft(request: ShortcutEditorRequest(shortcut: shortcut))
+        saveStatus = ""
+    }
+
+    private func add() {
+        draft = ShortcutDraft(request: ShortcutEditorRequest())
+        saveStatus = ""
+    }
+
+    @discardableResult private func save() -> Bool {
+        guard let draft, draft.canSave, store.saveShortcut(draft.shortcut),
+              let saved = store.shortcut(draft.value.id) else { return false }
+        draft.accept(saved)
+        saveStatus = "Saved"
+        return true
+    }
+
+    private func guardChanges(_ action: @escaping () -> Void) {
+        guard let draft, draft.isDirty else { action(); return }
+        dialogs.show(shortcutUnsavedDialog(draft: draft, save: {
+            if save() { action() }
+        }, discard: action))
+    }
+
+    private func remove(_ draft: ShortcutDraft) {
+        guard let shortcut = store.shortcut(draft.value.id) else { return }
+        var rows = [Dialog.Impact.Row(title: "Saved command",
+                                     detail: shortcut.availableInAllProjects
+                                     ? "Removed from all projects." : "Removed from this Mac.")]
+        if store.isRunningAnywhere(shortcut.id) {
+            rows.append(.init(title: "Running commands", detail: "Stopped right away."))
+        }
+        rows.append(.init(title: "Projects and conversations", detail: "Kept unchanged.", kept: true))
+        dialogs.show(.impact("Remove \(shortcut.name)?", rows: rows,
+                             warning: "This shortcut cannot be restored after removal.", action: "Remove shortcut") {
+            store.remove(shortcut.id)
+            if let first = matches.first { select(first) }
+            else { add() }
+        })
+    }
+}
+
+struct ShortcutLibraryList: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let shortcuts: [Shortcut]
+    let selectedID: Shortcut.ID?
+    let isEmptyLibrary: Bool
+    let select: (Shortcut) -> Void
+    let favorite: (Shortcut) -> Void
+    @FocusState private var focusedStar: Shortcut.ID?
+    @State private var movingID: Shortcut.ID?
+    @State private var visibleRect = CGRect.zero
+
+    static let rowHeight: CGFloat = 76
+    static let rowStride: CGFloat = 80
+
+    private var below: [Shortcut] {
+        shortcuts.enumerated().filter {
+            CGFloat($0.offset) * Self.rowStride + Self.rowHeight > visibleRect.maxY + 2
+        }.map(\.element)
+    }
+
+    var body: some View {
+        ScrollViewReader { scroller in
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(spacing: 4) {
+                        if shortcuts.isEmpty {
+                            PaneMessage(icon: isEmptyLibrary ? "bolt.slash" : "magnifyingglass",
+                                        title: isEmptyLibrary ? "No shortcuts saved" : "No shortcuts found",
+                                        detail: isEmptyLibrary ? "Add a command to get started."
+                                        : "Try another name or clear the search.")
+                                .frame(minHeight: 100)
+                        }
+                        ForEach(shortcuts) { shortcut in
+                            ShortcutLibraryRow(shortcut: shortcut, selected: shortcut.id == selectedID,
+                                               select: { select(shortcut) }, starFocus: $focusedStar) {
+                                movingID = shortcut.id
+                                focusedStar = shortcut.id
+                                withAnimation(reduceMotion ? nil : .timingCurve(0.2, 0.75, 0.25, 1, duration: 0.34)) {
+                                    favorite(shortcut)
+                                }
+                                Task { @MainActor in
+                                    await Task.yield()
+                                    scroller.scrollTo(shortcut.id)
+                                }
+                            }
+                            .id(shortcut.id)
+                            .zIndex(movingID == shortcut.id ? 1 : 0)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                }
+                .scrollIndicators(.visible)
+                .onScrollGeometryChange(for: CGRect.self) { $0.visibleRect } action: { _, rect in
+                    visibleRect = rect
+                }
+                .overlay(alignment: .trailing) {
+                    GeometryReader { geometry in
+                        let contentHeight = CGFloat(shortcuts.count) * Self.rowStride + 8
+                        if visibleRect.height > 0, contentHeight > visibleRect.height {
+                            let trackHeight = max(0, geometry.size.height - 8)
+                            let thumbHeight = min(trackHeight, max(20, trackHeight * visibleRect.height / contentHeight))
+                            let progress = min(1, max(0, visibleRect.minY / (contentHeight - visibleRect.height)))
+                            Capsule().fill(Theme.accent.opacity(0.08))
+                                .overlay(alignment: .top) {
+                                    Capsule().fill(Theme.accent.opacity(0.4))
+                                        .frame(height: thumbHeight)
+                                        .offset(y: (trackHeight - thumbHeight) * progress)
+                                }
+                                .frame(width: 4, height: trackHeight)
+                                .padding(.vertical, 4)
+                        }
+                    }
+                    .frame(width: 6)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+                Divider().overlay(Theme.hairline)
+                Group {
+                    if let first = below.first {
+                        Button {
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                                scroller.scrollTo(first.id, anchor: .top)
+                            }
+                        } label: {
+                            Label("\(below.count) more shortcut\(below.count == 1 ? "" : "s") below",
+                                  systemImage: "arrow.down")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.accent)
+                                .frame(maxWidth: .infinity, minHeight: 34)
+                                .surface(Theme.accent.opacity(0.07), cornerRadius: 7, border: Theme.accent.opacity(0.25))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Label(shortcuts.isEmpty ? "No matching shortcuts"
+                              : visibleRect.minY > 2 ? "End of list · \(shortcuts.count) shortcuts"
+                              : "All \(shortcuts.count) shortcuts visible", systemImage: "checkmark")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
+            }
+        }
+    }
+}
+
+struct ShortcutLibraryRow: View {
+    let shortcut: Shortcut
+    let selected: Bool
+    let select: () -> Void
+    var starFocus: FocusState<Shortcut.ID?>.Binding
+    let favorite: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Button(action: select) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: shortcut.icon ?? "terminal")
+                        .font(.system(size: 15))
+                        .foregroundStyle(selected ? .white : Theme.accent)
+                        .frame(width: 28, height: 28)
+                        .background(selected ? Theme.accentFill : Theme.accent.opacity(0.07),
+                                    in: RoundedRectangle(cornerRadius: 7))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(shortcut.name)
+                            .font(.system(size: 13, weight: .semibold))
+                            .padding(.trailing, 26)
+                        Text(shortcut.text.split(whereSeparator: \.isWhitespace).joined(separator: " "))
+                            .font(.mono(10.5))
+                            .foregroundStyle(.secondary)
+                        Label(shortcut.availableInAllProjects ? "All projects" : "This Mac",
+                              systemImage: shortcut.availableInAllProjects ? "globe" : "desktopcomputer")
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 10))
+                    }
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .frame(height: ShortcutLibraryList.rowHeight)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            Button(action: favorite) {
+                Image(systemName: shortcut.favorite ? "star.fill" : "star")
+                    .font(.system(size: 14))
+                    .foregroundStyle(shortcut.favorite ? Theme.secret : Color.secondary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focused(starFocus, equals: shortcut.id)
+            .overlay(RoundedRectangle(cornerRadius: 7)
+                .stroke(starFocus.wrappedValue == shortcut.id ? Theme.accent : .clear, lineWidth: 2))
+            .padding(.trailing, 5)
+            .padding(.top, 3)
+            .accessibilityLabel(shortcut.favorite ? "Remove \(shortcut.name) from favorites" : "Add \(shortcut.name) to favorites")
+            .accessibilityValue(shortcut.favorite ? "Favorite" : "Not favorite")
+            .accessibilityAddTraits(shortcut.favorite ? .isSelected : [])
+        }
+        .surface(selected ? Theme.accent.opacity(0.07) : Theme.sidebar, cornerRadius: 8,
+                 border: selected ? Theme.accent.opacity(0.4) : .clear)
+    }
+}
+
+private struct ShortcutCommandOutput: View {
+    @Environment(ShortcutStore.self) private var store
+    let shortcut: Shortcut?
+    let canRun: Bool
+
+    private var run: ShortcutRun? {
+        shortcut.map { ShortcutRun($0.id, in: $0.directory(projectPath: nil)) }
+    }
+    private var active: Bool { run.map { store.state($0).isActive } ?? false }
+    private var log: String { run.map(store.log) ?? "" }
+    private var status: String {
+        guard let run else { return "Not running" }
+        switch store.state(run) {
+        case .stopped: return "Not running"
+        case .running: return "Running"
+        case .finished: return "Finished"
+        case .failed: return "Failed"
+        }
+    }
+    private var output: String {
         if !log.isEmpty { return log }
-        switch store.state(selectedRun) {
-        case .stopped: return "Run this shortcut to see its output."
+        guard let run else { return "Save this shortcut before running it." }
+        switch store.state(run) {
+        case .stopped: return "Run this command to see its output here."
         case .running: return "Waiting for output…"
         case .finished: return "Finished without output."
         case .failed(let message, _, _): return message
         }
     }
 
-    private var outputIsPlaceholder: Bool {
-        guard selected?.kind == .command, let selectedRun else { return true }
-        return store.log(selectedRun).isEmpty
-    }
-
-    // Every shortcut on this screen belongs to the Mac, so every run of one is in the
-    // home folder and each shortcut has only the single run.
-    private func run(for shortcut: Shortcut) -> ShortcutRun {
-        ShortcutRun(shortcut.id, in: shortcut.directory(projectPath: nil))
-    }
-
-    private func toggle(_ shortcut: Shortcut) {
-        selectedID = shortcut.id
-        guard shortcut.kind == .command else { return }
-        let run = run(for: shortcut)
-        if store.state(run).isActive {
-            store.stop(run)
-        } else {
-            store.start(run)
-        }
-    }
-
-    private func selectAvailableShortcut() {
-        if selected == nil { selectedID = shortcuts.first?.id }
-    }
-
-    private func contextMenu(for shortcut: Shortcut) -> [MenuEntry] {
-        if shortcut.kind == .prompt {
-            return [
-                .item("Edit", action: { editor = ShortcutEditorRequest(shortcut: shortcut) }),
-                .separator,
-                .item("Remove", kind: .destructive, action: { confirmRemoval(of: shortcut) })
-            ]
-        }
-        if store.state(run(for: shortcut)).isActive {
-            return [
-                .item("Stop", action: { toggle(shortcut) }),
-                .separator,
-                .item("Remove", kind: .destructive, action: { confirmRemoval(of: shortcut) })
-            ]
-        }
-        return [
-            .item("Run", action: { toggle(shortcut) }),
-            .item("Edit", action: { editor = ShortcutEditorRequest(shortcut: shortcut) }),
-            .separator,
-            .item("Remove", kind: .destructive, action: { confirmRemoval(of: shortcut) })
-        ]
-    }
-
-    private func confirmRemoval(of shortcut: Shortcut) {
-        var rows = [Dialog.Impact.Row(title: shortcut.kind == .prompt ? "Saved prompt" : "Saved command",
-                                      detail: "Removed from Code Station.")]
-        if shortcut.kind == .command, store.state(run(for: shortcut)).isActive {
-            rows.append(.init(title: "Running command", detail: "Stopped right away."))
-        }
-        dialogs.show(.impact("Remove \(shortcut.name)?", rows: rows,
-                             action: "Remove") { store.remove(shortcut.id) })
-    }
-
-    private static let outputBottom = "shortcut-output-bottom"
-}
-
-private struct ShortcutRow: View {
-    let shortcut: Shortcut
-    let state: ShortcutStore.State
-    let selected: Bool
-    let select: () -> Void
-    let run: () -> Void
-    let edit: () -> Void
-    let remove: () -> Void
-
     var body: some View {
-        HStack(spacing: 12) {
-            Circle()
-                .fill(statusColour)
-                .frame(width: 8, height: 8)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 7) {
-                    if let icon = shortcut.icon {
-                        Image(systemName: icon)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.accent)
-                    }
-                    Text(shortcut.name)
-                        .font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                    if shortcut.kind == .prompt {
-                        Text("PROMPT")
-                            .font(.mono(8.5, .semibold))
-                            .kerning(0.45)
-                            .foregroundStyle(Theme.secret)
-                            .padding(.horizontal, 6)
-                            .frame(height: 17)
-                            .background(Capsule().fill(Theme.secret.opacity(0.1)))
-                            .overlay(Capsule().stroke(Theme.secret.opacity(0.28)))
-                            .fixedSize()
-                    }
-                    if shortcut.availableInAllProjects {
-                        Text("ALL PROJECTS")
-                            .font(.mono(8.5, .semibold))
-                            .kerning(0.45)
-                            .foregroundStyle(Theme.accent)
-                            .padding(.horizontal, 6)
-                            .frame(height: 17)
-                            .background(Capsule().fill(Theme.accent.opacity(0.1)))
-                            .overlay(Capsule().stroke(Theme.accent.opacity(0.28)))
-                            .fixedSize()
+        VStack(spacing: 14) {
+            HStack {
+                Text(canRun ? "Runs with zsh from ~ on this Mac." : "Save your changes before running this command.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                Spacer()
+                ActionButton(title: active ? "Stop command" : "Run command",
+                             tone: active ? .danger : .dark, height: 33, size: 12,
+                             icon: active ? "stop.fill" : "play.fill") {
+                    guard let run else { return }
+                    if active { store.stop(run) } else { store.start(run) }
+                }
+                .disabled(!active && (!canRun || run == nil))
+            }
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Output").font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                    Text(status).font(.system(size: 10)).foregroundStyle(.secondary)
+                    if !log.isEmpty {
+                        Button("Clear") { if let run { store.clearLog(run) } }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11)).foregroundStyle(Theme.accent)
+                            .frame(minHeight: 32)
                     }
                 }
-                Text(summary)
-                    .font(shortcut.kind == .command ? .mono(10.5) : .system(size: 11))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
-                    .textSelection(.enabled)
-                Text(statusText)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                .padding(.horizontal, 14)
+                .frame(height: 45)
+                ScrollViewReader { scroller in
+                    Group {
+                        if log.isEmpty {
+                            VStack(spacing: 8) {
+                                Image(systemName: "terminal").font(.system(size: 22))
+                                Text(output).font(.system(size: 12))
+                                    .textSelection(.enabled)
+                            }
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .padding(14)
+                        } else {
+                            ScrollView {
+                                Text(output)
+                                    .font(.mono(11))
+                                    .foregroundStyle(Theme.terminalText)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(14)
+                                Color.clear.frame(height: 1).id("output-bottom")
+                            }
+                        }
+                    }
+                    .frame(height: 120)
+                    .background(log.isEmpty ? Theme.card : Theme.terminal)
+                    .onChange(of: log) { _, _ in scroller.scrollTo("output-bottom", anchor: .bottom) }
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            iconButton("pencil", label: "Edit \(shortcut.name)", action: edit)
-                .disabled(state.isActive)
-                .opacity(state.isActive ? 0.35 : 1)
-            iconButton("trash", label: "Remove \(shortcut.name)", colour: Theme.deletion,
-                       action: remove)
-            // A prompt needs a conversation to land in, and this list is about the Mac
-            // rather than about any session, so there is nothing here to send it to.
-            if shortcut.kind == .command {
-                ActionButton(title: state.isActive ? "Stop" : "Run",
-                             tone: state.isActive ? .danger : .dark, height: 28, size: 12,
-                             action: run)
-            }
+            .cardSurface(cornerRadius: 10)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
-        .surface(selected ? Theme.accent.opacity(0.06) : Theme.card, cornerRadius: 10,
-                 border: selected ? Theme.accent.opacity(0.5) : Theme.border)
-        .contentShape(RoundedRectangle(cornerRadius: 10))
-        .onTapGesture(perform: select)
-    }
-
-    private var summary: String {
-        shortcut.text.split(whereSeparator: \Character.isWhitespace).joined(separator: " ")
-    }
-
-    private var statusText: String {
-        guard shortcut.kind == .command else {
-            return "Sent from the icon rail above a session"
-        }
-        switch state {
-        case .stopped: return "Not running"
-        case .running: return "Running"
-        case .finished: return "Finished"
-        case .failed(let message, _, _): return "Failed: \(message)"
-        }
-    }
-
-    private var statusColour: Color {
-        guard shortcut.kind == .command else { return Theme.secret }
-        switch state {
-        case .stopped, .finished: return Theme.dotOff
-        case .running: return Theme.dotOn
-        case .failed: return Theme.deletion
-        }
-    }
-
-    private func iconButton(_ icon: String, label: String, colour: Color = Theme.accent,
-                            action: @escaping () -> Void) -> some View {
-        GlyphButton(icon: icon, side: 28, tint: colour, action: action)
-            .accessibilityLabel(label)
-            .appTooltip(label)
     }
 }

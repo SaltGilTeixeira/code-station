@@ -682,7 +682,6 @@ private struct SiteConfigurationEditorView: View {
             ForEach(Array((draft.shortcuts ?? []).indices), id: \.self) { index in
                 let shortcut = binding(\.shortcuts, at: index,
                                        or: SiteDefaults.ShortcutEntry(name: "", command: ""))
-                let kind = shortcut.kind.wrappedValue ?? .command
                 editorCard {
                     HStack(alignment: .top, spacing: 10) {
                         SiteConfigurationField(caption: "NAME",
@@ -690,19 +689,8 @@ private struct SiteConfigurationEditorView: View {
                                                text: shortcut.name)
                         removeButton { draft.shortcuts?.remove(at: index) }
                     }
-                    HStack(spacing: 7) {
-                        ForEach(ShortcutKind.allCases) { option in
-                            ChoicePill(title: option.title, selected: kind == option) {
-                                // A command is the default, so it is written as the
-                                // absence of a kind and files stay readable by older builds.
-                                shortcut.kind.wrappedValue = option == .command ? nil : option
-                            }
-                        }
-                    }
-                    SiteConfigurationField(caption: kind == .command ? "COMMAND" : "PROMPT",
-                                           placeholder: kind == .command
-                                            ? "./gradlew bootRun"
-                                            : "Review my working tree and list what is unfinished.",
+                    SiteConfigurationField(caption: "COMMAND",
+                                           placeholder: "./gradlew bootRun",
                                            text: shortcut.command)
                     VStack(alignment: .leading, spacing: 7) {
                         SectionLabel("ICON", style: .field)
@@ -990,11 +978,10 @@ private enum SiteConfigurationForm {
         case .shortcuts:
             let shortcuts = (result.shortcuts ?? []).map {
                 SiteDefaults.ShortcutEntry(name: $0.name.trimmed, command: $0.command.trimmed,
-                                           icon: ShortcutIcon.resolve($0.icon),
-                                           kind: $0.kind == .command ? nil : $0.kind)
+                                           icon: ShortcutIcon.resolve($0.icon))
             }
             guard shortcuts.allSatisfy({ !$0.name.isEmpty && !$0.command.isEmpty }) else {
-                throw ImportError("Every shortcut needs a name, and a command or prompt.")
+                throw ImportError("Every shortcut needs a name and a command.")
             }
             result.shortcuts = shortcuts
         }

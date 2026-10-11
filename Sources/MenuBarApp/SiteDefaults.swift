@@ -90,7 +90,8 @@ struct SiteDefaults: Codable, Sendable, Equatable {
             })
         }
         skills = try values.decodeIfPresent(Skills.self, forKey: .skills)
-        shortcuts = try values.decodeIfPresent([ShortcutEntry].self, forKey: .shortcuts)
+        shortcuts = try values.decodeIfPresent([CommandShortcutRecord<ShortcutEntry>].self,
+                                              forKey: .shortcuts)?.compactMap(\.value)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -301,14 +302,10 @@ struct SiteDefaults: Codable, Sendable, Equatable {
     // enough to be worth handing over rather than typing out.
     struct ShortcutEntry: Codable, Sendable, Equatable {
         var name: String
-        // The shell command to run, or the prompt to send when the kind says so. The key
-        // is still "command" so that files written before prompts existed still read.
         var command: String
         // An SF Symbol name. A symbol this build cannot draw is dropped, so the shortcut
         // arrives with no icon rather than with a gap where one should be.
         var icon: String? = nil
-        // Left out for a command, which is all a shortcut could be when the key was added.
-        var kind: ShortcutKind? = nil
     }
 }
 
@@ -476,7 +473,6 @@ extension SiteDefaults {
             Shortcut(id: Self.identity(of: "\($0.name)\n\($0.command)"),
                      name: $0.name,
                      text: $0.command,
-                     kind: $0.kind ?? .command,
                      icon: $0.icon)
         }
     }

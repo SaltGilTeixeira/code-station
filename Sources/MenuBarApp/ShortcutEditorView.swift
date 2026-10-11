@@ -1,9 +1,7 @@
 import SwiftUI
 
-// Asking for a shortcut: what it is, a name, an optional icon, the command or prompt it
-// carries, and whether every project can use it. The screen it was opened from supplies
-// the private scope, while sharing deliberately moves the shortcut to the Mac so every
-// project can see the same saved shortcut.
+// The opening screen supplies the private scope. Sharing moves the shortcut to the
+// Mac so every project sees the same saved command.
 struct ShortcutEditorRequest: Identifiable {
     let id = UUID()
     var shortcut: Shortcut?
@@ -12,8 +10,6 @@ struct ShortcutEditorRequest: Identifiable {
     var projectID: UUID?
     // Named so the sheet can say where the shortcut lands instead of asking.
     var projectName: String?
-    // What a new shortcut starts as, for the menu that offers each kind on its own.
-    var kind: ShortcutKind = .command
     // A command the reader has already seen run, so promoting it is a naming job rather
     // than a retype.
     var text: String?
@@ -21,163 +17,167 @@ struct ShortcutEditorRequest: Identifiable {
 
 struct ShortcutEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(DialogPresenter.self) private var dialogs
+    @Environment(ShortcutStore.self) private var store
+    @State private var draft: ShortcutDraft
+    private let onSave: (Shortcut) -> Bool
 
-    private let request: ShortcutEditorRequest
-    private let id: Shortcut.ID
-    private let projectIDWhenPrivate: UUID?
-    private let editing: Bool
-    private let onSave: (Shortcut) -> Void
-
-    @State private var name: String
-    @State private var text: String
-    @State private var kind: ShortcutKind
-    @State private var icon: String?
-    @State private var availableInAllProjects: Bool
-
-    init(request: ShortcutEditorRequest, onSave: @escaping (Shortcut) -> Void) {
-        let shortcut = request.shortcut
-        self.request = request
-        id = shortcut?.id ?? UUID()
-        projectIDWhenPrivate = shortcut?.projectID ?? request.projectID
-        editing = shortcut != nil
+    init(request: ShortcutEditorRequest, onSave: @escaping (Shortcut) -> Bool) {
+        _draft = State(initialValue: ShortcutDraft(request: request))
         self.onSave = onSave
-        _name = State(initialValue: shortcut?.name ?? "")
-        _text = State(initialValue: shortcut?.text ?? request.text ?? "")
-        _kind = State(initialValue: shortcut?.kind ?? request.kind)
-        _icon = State(initialValue: shortcut?.icon)
-        _availableInAllProjects = State(
-            initialValue: shortcut?.availableInAllProjects ?? false)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 20) {
-                Text(editing ? "Edit shortcut" : "Add shortcut")
-                    .font(.serif(24, .semibold))
-
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionLabel("KIND")
-                    HStack(spacing: 7) {
-                        ForEach(ShortcutKind.allCases) { option in
-                            ChoicePill(title: option.title, selected: kind == option) {
-                                kind = option
-                            }
-                        }
-                    }
-                    Text(kindDetail)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionLabel("NAME")
-                    TextField(kind == .command ? "Local service" : "Unfinished work",
-                              text: $name)
-                        .appTextField(cornerRadius: 9)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionLabel("ICON")
-                    ShortcutIconPicker(symbol: $icon)
-                    Text(iconDetail)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    SectionLabel(kind == .command ? "COMMAND" : "PROMPT")
-                    TextEditor(text: $text)
-                        .font(kind == .command ? .mono(12) : .system(size: 12))
-                        .scrollContentBackground(.hidden)
-                        .padding(7)
-                        .frame(height: 140)
-                        .fieldSurface(cornerRadius: 9)
-
-                    Toggle(isOn: $availableInAllProjects) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Available in all projects")
-                                .font(.system(size: 12, weight: .semibold))
-                            if let availabilityDetail {
-                                Text(availabilityDetail)
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .toggleStyle(.appCheckbox)
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 9)
-                    .cardSurface(cornerRadius: 9)
-
-                    Text(landsIn)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            if let error = store.loadError ?? store.saveError {
+                WarningStrip(error, icon: "externaldrive.badge.exclamationmark")
             }
-            .padding(28)
-
-            SheetFooter(primary: SheetAction(title: editing ? "Save" : "Add",
-                                             enabled: !name.isBlank && !text.isBlank,
-                                             shortcut: .defaultAction, action: save),
-                        dismiss: { dismiss() })
+            ScrollView {
+                ShortcutEditorForm(draft: draft, locked: store.isRunningAnywhere(draft.value.id))
+                    .padding(28)
+            }
+            SheetFooter(primary: SheetAction(title: draft.isNew ? "Add shortcut" : "Save shortcut",
+                                             enabled: draft.canSave && !store.isRunningAnywhere(draft.value.id),
+                                             shortcut: KeyboardShortcut("s"), action: save),
+                        dismiss: cancel)
         }
-        .frame(width: 520)
+        .frame(minWidth: 390, idealWidth: 620, maxWidth: 720,
+               minHeight: 300, idealHeight: 640, maxHeight: 780)
         .background(Theme.background)
+        .interactiveDismissDisabled(draft.isDirty)
     }
 
     private func save() {
-        onSave(Shortcut(id: id, name: name.trimmed,
-                        text: text.trimmed,
-                        kind: kind,
-                        icon: icon,
-                        projectID: availableInAllProjects ? nil : projectIDWhenPrivate,
-                        availableInAllProjects: availableInAllProjects))
-        dismiss()
+        if onSave(draft.shortcut) { dismiss() }
     }
 
-    private var kindDetail: String {
-        switch kind {
-        case .command:
-            "A shell command, offered as a chip beside the composer."
-        case .prompt:
-            "A prompt for the agent, offered as a chip beside the composer."
+    private func cancel() {
+        guard draft.isDirty else { dismiss(); return }
+        dialogs.show(shortcutUnsavedDialog(draft: draft, save: save, discard: { dismiss() }))
+    }
+}
+
+@MainActor
+func shortcutUnsavedDialog(draft: ShortcutDraft, save: @escaping () -> Void,
+                           discard: @escaping () -> Void) -> Dialog {
+    Dialog(title: "Save your changes?",
+           message: "You have unsaved changes to \(draft.value.name.isBlank ? "this shortcut" : draft.value.name).",
+           actions: [
+            .init(label: "Keep editing", kind: .cancel),
+            .init(label: "Discard", handler: discard),
+            .init(label: "Save", kind: .primary, handler: save,
+                  isEnabled: { draft.canSave })
+           ], isModal: true)
+}
+
+struct ShortcutEditorForm<CommandContent: View>: View {
+    @Bindable var draft: ShortcutDraft
+    var locked = false
+    var showsCommandOutput = false
+    @ViewBuilder var commandContent: CommandContent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            heading
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 8) {
+                    fieldLabel("Name")
+                    TextField("Local service",
+                              text: $draft.value.name)
+                        .appTextField(size: 14, cornerRadius: 8)
+                        .accessibilityLabel("Shortcut name")
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    fieldLabel("Icon")
+                    ShortcutIconMenu(symbol: $draft.value.icon)
+                }
+                .frame(width: 75)
+            }
+            .disabled(locked)
+            VStack(alignment: .leading, spacing: 8) {
+                fieldLabel("Command")
+                TextEditor(text: $draft.value.text)
+                    .font(.mono(12))
+                    .scrollContentBackground(.hidden)
+                    .padding(9)
+                    .frame(height: 80)
+                    .fieldSurface(cornerRadius: 8)
+                    .accessibilityLabel("Command")
+                Text(commandHelp)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(locked)
+            commandContent
+            Toggle(isOn: $draft.value.availableInAllProjects) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Available in all projects").font(.system(size: 12, weight: .semibold))
+                    Text("Run it from any project folder or session worktree.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.appCheckbox)
+            .disabled(locked)
+            if let projectName = draft.projectName, !draft.value.availableInAllProjects {
+                Text("Saved for \(projectName).")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var iconDetail: String {
-        kind == .command
-            ? "Drawn on the chip beside the name. A shortcut needs no icon."
-            : "Drawn on the chip beside the name. A prompt with no icon gets a generic one."
+    private var heading: some View {
+        Text(draft.isNew ? "Add shortcut" : "Edit shortcut")
+            .font(.system(size: 17, weight: .semibold))
     }
 
-    // A project-only shortcut needs no note: the text below already says where it lands.
-    private var availabilityDetail: String? {
-        if availableInAllProjects {
-            return kind == .command
-                ? "Shown in every project and run from the project using it."
-                : "Shown in every session, whichever project it belongs to."
+    private var commandHelp: String {
+        if showsCommandOutput { return "Run it here, or from a project using this shortcut." }
+        if draft.value.availableInAllProjects {
+            return "Runs with zsh in the project folder or session worktree that runs it."
         }
-        if request.projectName != nil {
-            return nil
+        if let projectName = draft.projectName {
+            return "Runs with zsh in the \(projectName) session's worktree, or its project folder when there is none."
         }
-        return "Turn this on to use the shortcut from any project."
+        return "Runs with zsh in your home folder."
     }
 
-    private var landsIn: String {
-        guard kind == .command else {
-            return "Sent to the agent in the session you are looking at, as though you had "
-                + "typed it. A session already working queues it behind the turn it is on."
+    private func fieldLabel(_ title: String) -> some View {
+        Text(title).font(.system(size: 12, weight: .semibold))
+    }
+}
+
+extension ShortcutEditorForm where CommandContent == EmptyView {
+    init(draft: ShortcutDraft, locked: Bool = false) {
+        self.draft = draft
+        self.locked = locked
+        commandContent = EmptyView()
+    }
+}
+
+private struct ShortcutIconMenu: View {
+    @Binding var symbol: String?
+
+    var body: some View {
+        HStack(spacing: 13) {
+            Image(systemName: symbol ?? "slash.circle").font(.system(size: 17))
+            Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
         }
-        let place = if availableInAllProjects {
-            "the project folder or session worktree that runs it"
-        } else if let projectName = request.projectName {
-            "the worktree of whichever \(projectName) session runs it, "
-                + "or the project folder when there is none"
-        } else {
-            "your home folder"
+        .foregroundStyle(Theme.accent)
+        .frame(width: 75, height: 38)
+        .cardSurface(cornerRadius: 8)
+        .contentShape(Rectangle())
+        .appMenu {
+            [.icons([MenuItem(label: "No icon", icon: "slash.circle", checked: symbol == nil,
+                              handler: { symbol = nil })] + ShortcutIcon.catalogue.map { icon in
+                MenuItem(label: icon.label, icon: icon.symbol, checked: symbol == icon.symbol,
+                         handler: { symbol = icon.symbol })
+            })]
         }
-        return "Runs with zsh in \(place). Output is captured, so the run can report how it ended."
+        .accessibilityLabel("Choose shortcut icon")
+        .accessibilityValue(symbol.flatMap { selected in
+            ShortcutIcon.catalogue.first { $0.symbol == selected }?.label
+        } ?? "No icon")
     }
 }

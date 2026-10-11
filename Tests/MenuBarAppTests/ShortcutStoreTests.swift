@@ -348,80 +348,45 @@ struct ShortcutStoreTests {
         #expect(store.output(for: scope) == run)
     }
 
-    // A shortcut saved before a shortcut could be anything but a command still is one,
-    // and a prompt has to survive the round trip to disk with its kind intact.
-    @Test func readsShortcutsSavedBeforePromptsExisted() throws {
-        let id = UUID()
+    @Test func dropsSavedPromptsWithoutLosingCommands() throws {
+        let command = UUID()
+        let explicitCommand = UUID()
+        let prompt = UUID()
         try Data("""
-        { "shortcuts": [ { "id": "\(id.uuidString)", "name": "Prune", "command": "docker system prune" } ] }
+        { "shortcuts": [
+          { "id": "\(command)", "name": "Build", "command": "make", "favorite": true },
+          { "id": "\(prompt)", "name": "Review", "command": "Review changes", "kind": "prompt",
+            "promptSettings": {"agent":"codex", "model":"saved-model"} },
+          { "id": "\(explicitCommand)", "name": "Tests", "command": "make test", "kind": "command" }
+        ] }
         """.utf8).write(to: url)
 
         let store = emptyStore(url)
-        #expect(store.shortcut(id)?.kind == .command)
-
-        let prompt = try #require(store.add(name: "Unfinished",
-                                            text: "List what is left to do.",
-                                            kind: .prompt))
-        #expect(emptyStore(url).shortcut(prompt) == Shortcut(
-            id: prompt, name: "Unfinished", text: "List what is left to do.", kind: .prompt))
-    }
-
-    // A prompt is sent by a session, which has a conversation to send it to. Nothing can
-    // hand one to zsh, so asking for a run leaves it exactly where it was.
-    @Test func neverRunsAPrompt() throws {
-        let store = emptyStore(url)
-        let id = try #require(store.add(name: "Recap", text: "Sum up this session.",
-                                        kind: .prompt))
-        let run = ShortcutRun(id, in: FileManager.default.temporaryDirectory.path)
-
+        #expect(store.loadError == nil)
+        #expect(store.shortcuts.map(\.id) == [command, explicitCommand])
+        #expect(store.shortcut(command)?.favorite == true)
+        let run = ShortcutRun(prompt, in: FileManager.default.temporaryDirectory.path)
         store.start(run)
-
         #expect(store.state(run) == .stopped)
         #expect(store.log(run).isEmpty)
+
+        #expect(store.save())
+        #expect(emptyStore(url).shortcuts == store.shortcuts)
+        let saved = try String(contentsOf: url, encoding: .utf8)
+        #expect(!saved.contains("prompt"))
+        #expect(!saved.contains("kind"))
     }
 
-    // The chip strip runs commands and the prompt rail sends prompts, so each asks for
-    // the kind it can offer and neither ever sees the other's.
-    @Test func splitsWhatAProjectOffersByKind() throws {
+    @Test func rejectsUnknownShortcutKinds() throws {
+        try Data("""
+        { "shortcuts": [
+          { "id": "\(UUID())", "name": "Unknown", "command": "unknown action", "kind": "unknown" }
+        ] }
+        """.utf8).write(to: url)
         let store = emptyStore(url)
-        let project = UUID()
-        _ = store.add(name: "Lint", text: "npm run lint", projectID: project)
-        _ = store.add(name: "Review", text: "Review my working tree.", kind: .prompt,
-                      projectID: project)
-        _ = store.add(name: "Tidy", text: "Tidy what you just wrote.", kind: .prompt,
-                      availableInAllProjects: true)
-
-        #expect(store.shortcuts(for: project).map(\.name) == ["Lint", "Review", "Tidy"])
-        #expect(store.shortcuts(for: project, kind: .command).map(\.name) == ["Lint"])
-        #expect(store.shortcuts(for: project, kind: .prompt).map(\.name)
-            == ["Review", "Tidy"])
-        #expect(store.shortcuts(for: [project], kind: .prompt).map(\.shortcut.name)
-            == ["Review", "Tidy"])
-    }
-
-    // A prompt is offered on a rail of glyphs with no room for a name, so one saved
-    // without an icon still has something to draw.
-    @Test func givesEveryPromptAGlyph() {
-        #expect(Shortcut(name: "Recap", text: "Sum up.", kind: .prompt).glyph == "sparkles")
-        #expect(Shortcut(name: "Recap", text: "Sum up.", kind: .prompt, icon: "book")
-            .glyph == "book")
-        #expect(Shortcut(name: "Lint", text: "npm run lint").glyph == nil)
-    }
-
-    // Rewriting what a shortcut does makes the last run stop describing it, and changing
-    // a command into a prompt is the largest rewrite there is.
-    @Test func forgetsRunsWhenTheKindChanges() async throws {
-        let store = emptyStore(url)
-        let id = try #require(store.add(name: "Say", text: "echo hello"))
-        let run = ShortcutRun(id, in: FileManager.default.temporaryDirectory.path)
-
-        store.start(run)
-        #expect(await waitUntil { !store.state(run).isActive })
-
-        store.update(Shortcut(id: id, name: "Say", text: "echo hello", kind: .prompt))
-
-        #expect(store.log(run).isEmpty)
-        #expect(store.state(run) == .stopped)
+        #expect(store.loadError != nil)
+        #expect(store.shortcuts.isEmpty)
+        #expect(!store.save())
     }
 
     private func emptyStore(_ url: URL) -> ShortcutStore {

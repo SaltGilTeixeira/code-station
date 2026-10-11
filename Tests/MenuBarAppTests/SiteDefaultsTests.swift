@@ -130,9 +130,7 @@ struct SiteDefaultsTests {
         #expect(first[0].id != first[1].id)
     }
 
-    // A team can hand over a prompt as well as a command. The key is left out for a
-    // command, so files written before prompts existed still read as commands.
-    @Test func readsTheKindOfEachSharedShortcut() throws {
+    @Test func dropsPromptsFromSiteConfiguration() throws {
         let url = try file("""
         { "shortcuts": [
             { "name": "Build", "command": "swift build" },
@@ -140,9 +138,11 @@ struct SiteDefaultsTests {
         ] }
         """)
 
-        let shortcuts = SiteDefaults.load([url]).startingShortcuts
-
-        #expect(shortcuts.map(\.kind) == [.command, .prompt])
+        let defaults = SiteDefaults.load([url])
+        #expect(defaults.loadFailure == nil)
+        #expect(defaults.startingShortcuts.map(\.name) == ["Build"])
+        let saved = try JSONEncoder().encode(defaults)
+        #expect(!String(decoding: saved, as: UTF8.self).contains("prompt"))
     }
 
     @Test func readsThePreviousHTTPClientSection() throws {
@@ -271,8 +271,7 @@ struct SiteDefaultsTests {
             #expect(defaults.deployEnvironment(named: preset.environmentTag) != nil)
         }
         #expect(defaults.skills != nil)
-        // Both kinds, since the example is what a deployment reads to learn the shape.
-        #expect(Set(defaults.startingShortcuts.map(\.kind)) == [.command, .prompt])
+        #expect(!defaults.startingShortcuts.isEmpty)
     }
 
     // No settings are compiled in, so a plain checkout builds an app with no file to fall

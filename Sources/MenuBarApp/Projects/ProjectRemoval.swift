@@ -60,7 +60,7 @@ enum ProjectRemoval {
         }
         if saved > 0 {
             rows.append(.init(title: counted(saved, "saved shortcut"),
-                              detail: "\(isTask ? "Task" : "Project") commands and prompts are permanently removed."))
+                              detail: "\(isTask ? "Task" : "Project") commands are permanently removed."))
         }
         if designs > 0 {
             rows.append(.init(title: "Generated Design files",

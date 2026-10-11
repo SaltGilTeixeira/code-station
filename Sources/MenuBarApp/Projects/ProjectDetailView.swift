@@ -51,15 +51,7 @@ struct ProjectDetailView: View {
             .background(terminalShortcut(project))
             .sheet(item: $shortcutEditor) { request in
                 ShortcutEditorView(request: request) { shortcut in
-                    if request.shortcut == nil {
-                        shortcuts.add(name: shortcut.name, text: shortcut.text,
-                                      kind: shortcut.kind,
-                                      icon: shortcut.icon,
-                                      projectID: shortcut.projectID,
-                                      availableInAllProjects: shortcut.availableInAllProjects)
-                    } else {
-                        shortcuts.update(shortcut)
-                    }
+                    shortcuts.saveShortcut(shortcut)
                 }
                 .appOverlays()
             }
@@ -245,11 +237,8 @@ struct ProjectDetailView: View {
     // work in front of you; here they are one more thing the folder has, so they take the
     // room of one reading. A run happens in the project folder, since a project screen is
     // not looking at any one worktree.
-    //
-    // The project's prompts are not here: a project screen has no conversation to send
-    // one to, so they are offered on the rail above a session instead.
     private func shortcutsControl(_ project: Project) -> some View {
-        let saved = shortcuts.shortcuts(for: project.id, kind: .command)
+        let saved = shortcuts.shortcuts(for: project.id)
         let running = shortcuts.runningCount(of: saved)
         let failed = shortcuts.failureCount(of: saved)
         let tint = running > 0 ? Theme.accent : failed > 0 ? Theme.deletion : Color.secondary
