@@ -127,49 +127,61 @@ final class DialogPresenter {
 
 struct DialogHost: View {
     @Environment(DialogPresenter.self) private var presenter
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focusedAction: UUID?
 
+    // The backdrop and the card come and go as separate layers, so a dialog opened from
+    // another dialog's button swaps the card while the dimmed app stays dimmed.
     var body: some View {
-        if let dialog = presenter.current {
-            ZStack {
+        ZStack {
+            if presenter.current != nil {
                 // The backdrop both dims the app and swallows clicks meant for it.
                 Color.black.opacity(0.18)
                     .ignoresSafeArea()
                     .onTapGesture { presenter.dismiss() }
-
-                if dialog.impact != nil {
-                    GeometryReader { geometry in
-                        ImpactDialogCard(dialog: dialog, maxHeight: max(0, geometry.size.height - 32))
-                            .frame(width: min(dialog.width, max(0, geometry.size.width - 32)))
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                    .id(dialog.id)
-                } else {
-                    card(dialog)
-                        .frame(width: dialog.width)
-                        .id(dialog.id)
-                        .transition(.fadeIn)
-                }
+                    .transition(.dialogBackdrop(reduceMotion: reduceMotion))
             }
-            .transition(.fadeIn)
-            .smoothlyResizes(when: dialog.id)
+
+            if let dialog = presenter.current {
+                Group {
+                    if dialog.impact != nil {
+                        GeometryReader { geometry in
+                            ImpactDialogCard(dialog: dialog, maxHeight: max(0, geometry.size.height - 32))
+                                .frame(width: min(dialog.width, max(0, geometry.size.width - 32)))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                    } else {
+                        card(dialog)
+                            .frame(width: dialog.width)
+                    }
+                }
+                .id(dialog.id)
+                .transition(.dialogCard(reduceMotion: reduceMotion))
+            }
         }
+        .smoothlyResizes(when: presenter.current?.id)
     }
 
+    // The card reads its parts out in order once it has arrived: the question, what it
+    // is about, then whatever else it shows. The buttons come early so the way out is
+    // there almost at once.
     private func card(_ dialog: Dialog) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(dialog.title)
                     .font(.serif(17, .semibold))
                     .fixedSize(horizontal: false, vertical: true)
+                    .arrives(after: 0.05, rising: 4)
                 if let message = dialog.message {
                     Text(message)
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .arrives(after: 0.09, rising: 4)
                 }
                 if let content = dialog.content {
                     content
+                        .arrives(after: 0.13, rising: 4)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -186,6 +198,7 @@ struct DialogHost: View {
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 20)
+            .arrives(after: 0.06, animation: .easeOut(duration: 0.16))
         }
         .floatingCard(cornerRadius: 14)
         .accessibilityElement(children: .contain)
@@ -244,6 +257,13 @@ private struct ImpactDialogCard: View {
 
     private var compact: Bool { dialog.impact?.compact == true }
 
+    // When each row starts to arrive. Rows follow 70 ms apart, and a long list closes the
+    // gap so the whole of it has landed within about half a second.
+    private func rowStart(_ index: Int) -> Double {
+        let rows = max(dialog.impact?.rows.count ?? 0, 1)
+        return 0.18 + Double(index) * min(0.07, 0.27 / Double(rows))
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             MenuContentScrollView(maxHeight: max(0, maxHeight - (compact ? 56 : 76))) {
@@ -263,6 +283,7 @@ private struct ImpactDialogCard: View {
                                     .font(.system(size: 12))
                                     .foregroundStyle(.secondary)
                             }
+                            .arrives(after: 0.05, rising: 4, animation: .easeOut(duration: 0.18))
                         }
                         VStack(alignment: .leading, spacing: compact ? 8 : 10) {
                             Text(dialog.title)
@@ -274,9 +295,12 @@ private struct ImpactDialogCard: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        .arrives(after: 0.09, rising: 4)
                         VStack(spacing: 0) {
-                            ForEach(Array(impact.rows.enumerated()), id: \.offset) { _, row in
+                            ForEach(Array(impact.rows.enumerated()), id: \.offset) { index, row in
+                                let start = rowStart(index)
                                 Rectangle().fill(Theme.border).frame(height: 1)
+                                    .draws(after: start)
                                 HStack(alignment: compact ? .top : .center, spacing: compact ? 10 : 14) {
                                     Image(systemName: row.kept ? "checkmark" : "minus")
                                         .font(.system(size: compact ? 13 : 19, weight: .medium))
@@ -285,23 +309,27 @@ private struct ImpactDialogCard: View {
                                         .background(row.kept ? Theme.accent.opacity(0.10) : Theme.warningBackground,
                                                     in: Circle())
                                         .accessibilityHidden(true)
+                                        .arrives(after: start + 0.04, growing: 0.5, animation: Motion.pop)
                                     VStack(alignment: .leading, spacing: 5) {
                                         Text(row.title).font(.system(size: 13, weight: .medium))
                                         Text(row.detail)
                                             .font(.system(size: 12))
                                             .foregroundStyle(.secondary)
                                     }
+                                    .arrives(after: start + 0.06, sliding: 6, animation: .easeOut(duration: 0.22))
                                     Spacer(minLength: 0)
                                 }
                                 .padding(.vertical, compact ? 12 : 17)
                                 .accessibilityElement(children: .combine)
                             }
                             Rectangle().fill(Theme.border).frame(height: 1)
+                                .draws(after: rowStart(impact.rows.count))
                         }
                         if let warning = impact.warning {
                             Label(warning, systemImage: "info.circle")
                                 .font(.system(size: 12))
                                 .foregroundStyle(Theme.deletion)
+                                .arrives(after: rowStart(impact.rows.count) + 0.06)
                         }
                     }
                 }
@@ -329,6 +357,7 @@ private struct ImpactDialogCard: View {
             .padding(.horizontal, compact ? 16 : 20)
             .padding(.vertical, compact ? 12 : 20)
             .background(Theme.field)
+            .arrives(after: 0.06, animation: .easeOut(duration: 0.16))
         }
         .clipShape(RoundedRectangle(cornerRadius: compact ? 14 : 18))
         .floatingCard(cornerRadius: compact ? 14 : 18)
@@ -349,5 +378,83 @@ private struct ImpactDialogCard: View {
             focusedAction = dialog.actions.first { $0.kind == .cancel }?.id
         }
         .onDisappear { presenter.restoreFocus() }
+    }
+}
+
+// A dialog's card arrives a little below and a hair smaller than its place, and rises into
+// it. It leaves with a short fade and the faintest shrink, and nothing inside it is staged
+// on the way out. For anyone who asked for less motion, both become a plain crossfade.
+extension AnyTransition {
+    @MainActor
+    static func dialogCard(reduceMotion: Bool) -> AnyTransition {
+        if reduceMotion {
+            return .asymmetric(insertion: .opacity.animation(.easeInOut(duration: 0.15)),
+                               removal: .opacity.animation(.easeInOut(duration: 0.12)))
+        }
+        return .asymmetric(
+            insertion: .opacity.animation(.easeOut(duration: 0.12))
+                .combined(with: .scale(scale: 0.985).combined(with: .offset(y: 6)).animation(Motion.arrive)),
+            removal: .opacity.combined(with: .scale(scale: 0.98)).animation(Motion.leave))
+    }
+
+    @MainActor
+    static func dialogBackdrop(reduceMotion: Bool) -> AnyTransition {
+        if reduceMotion {
+            return .asymmetric(insertion: .opacity.animation(.easeInOut(duration: 0.15)),
+                               removal: .opacity.animation(.easeInOut(duration: 0.12)))
+        }
+        return .asymmetric(insertion: .opacity.animation(.easeOut(duration: 0.18)),
+                           removal: .opacity.animation(.easeIn(duration: 0.16).delay(0.02)))
+    }
+}
+
+// One part of a dialog taking its place after the card has arrived. The part is laid out
+// from the first frame, so nothing around it moves and its buttons and keys work at once;
+// only how it looks catches up.
+private struct Arrival: ViewModifier {
+    let delay: Double
+    let rise: CGFloat
+    let slide: CGFloat
+    let scale: CGFloat
+    let animation: Animation
+
+    @State private var arrived = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        let shown = arrived || reduceMotion
+        content
+            .opacity(shown ? 1 : 0)
+            .scaleEffect(shown ? 1 : scale)
+            .offset(x: shown ? 0 : -slide, y: shown ? 0 : rise)
+            .onAppear { withAnimation(animation.delay(delay)) { arrived = true } }
+    }
+}
+
+// A dividing rule drawing itself from the leading edge.
+private struct RuleDraw: ViewModifier {
+    let delay: Double
+
+    @State private var drawn = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        // Never a zero scale: a singular transform can hand AppKit a NaN frame.
+        content
+            .scaleEffect(x: drawn || reduceMotion ? 1 : 0.01, y: 1, anchor: .leading)
+            .onAppear { withAnimation(Motion.draw.delay(delay)) { drawn = true } }
+    }
+}
+
+// Only for plain SwiftUI content: a scale on a view that hosts AppKit, such as an
+// `ActionButton` or anything with a tooltip or a hover lift, can crash its layout.
+private extension View {
+    func arrives(after delay: Double, rising rise: CGFloat = 0, sliding slide: CGFloat = 0,
+                 growing scale: CGFloat = 1, animation: Animation = .easeOut(duration: 0.2)) -> some View {
+        modifier(Arrival(delay: delay, rise: rise, slide: slide, scale: scale, animation: animation))
+    }
+
+    func draws(after delay: Double) -> some View {
+        modifier(RuleDraw(delay: delay))
     }
 }

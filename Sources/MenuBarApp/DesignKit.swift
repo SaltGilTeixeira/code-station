@@ -700,6 +700,17 @@ enum Motion {
     static let control = Animation.spring(response: 0.26, dampingFraction: 0.78)
     // Something arriving or leaving: a menu unfolding, a pane swapped for another.
     static let reveal = Animation.easeOut(duration: 0.18)
+    // A dialog's card rising into place. A touch softer than a control, so a large
+    // surface settles rather than snaps.
+    static let arrive = Animation.spring(response: 0.3, dampingFraction: 0.85)
+    // A small mark landing, such as the badge on a dialog row. It bounces more than a
+    // control, since on something this small a firmer spring reads as no motion at all.
+    static let pop = Animation.spring(response: 0.3, dampingFraction: 0.66)
+    // A line drawing itself: quick out of the gate, then a long gentle finish.
+    static let draw = Animation.timingCurve(0.2, 0.7, 0.1, 1, duration: 0.28)
+    // Anything put away. Leaving is always quicker than arriving, so closing never
+    // feels like waiting.
+    static let leave = Animation.easeIn(duration: 0.12)
 
     // How far a control swells under the pointer. Kept this small on purpose: at this
     // size the lift is felt as the control waking up, and much past it the window starts
