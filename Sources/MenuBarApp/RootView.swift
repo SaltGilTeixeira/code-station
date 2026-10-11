@@ -439,7 +439,7 @@ struct RootView: View {
     }
 
     private var home: some View {
-        HomeView(onReviewOldSessions: { sheet = .oldSessions })
+        HomeView()
     }
 }
 

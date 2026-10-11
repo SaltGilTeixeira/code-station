@@ -5,8 +5,6 @@ import SwiftUI
 // pitch - the case for the app is only made once, on the empty state, when there is no
 // status to report yet.
 struct HomeView: View {
-    let onReviewOldSessions: () -> Void
-
     @Environment(ProjectStore.self) private var store
     @Environment(SessionRunner.self) private var runner
     @Environment(AppSettings.self) private var appSettings
@@ -91,7 +89,6 @@ struct HomeView: View {
                     timeSpent(standing)
                     dailyTotals(standing)
                     resume(standing)
-                    if !oldSessions.isEmpty { cleanup() }
                 }
                 .motion(HomeWorkMapView.reflow, value: map.shape)
                 .padding(24)
@@ -213,26 +210,7 @@ struct HomeView: View {
         }
     }
 
-    private func cleanup() -> some View {
-        let stale = oldSessions
-        let worktrees = Set(stale.flatMap {
-            store.checkoutProjects(for: $0).compactMap(\.worktreePath)
-        })
-        return FooterStrip(
-            title: "\(counted(stale.count, "session")) older than \(appSettings.oldSessionDays) days",
-            detail: worktrees.isEmpty
-                ? "nothing left checked out"
-                : "\(counted(worktrees.count, "worktree")) still checked out") {
-            InlineLink(title: "Clean up →", size: 12.5, action: onReviewOldSessions)
-        }
-    }
-
     // MARK: - Reading the store
-
-    private var oldSessions: [ChatSession] {
-        OldSessions.olderThan(appSettings.oldSessionDays, in: store.sidebarSessions)
-            .filter { !runner.isBusy($0.id, store: store) }
-    }
 
     // A session whose last message falls outside the band can still hold a turn whose
     // calls reported in after it, so the net is cast a little wider than the band itself.
