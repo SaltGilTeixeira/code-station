@@ -104,9 +104,24 @@ struct SessionRunButton: View {
             }
         }
         .frame(width: 340, alignment: .bottomTrailing)
+        // One opaque tray under every card, so the transcript never shows between or
+        // through them. It stays in the layout while closed and only fades, so the cards
+        // inside it still get their own staggered rise each time it opens.
+        .padding(6)
+        .background {
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Theme.sidebar)
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.settingsBorder))
+                .shadow(color: .black.opacity(0.16), radius: 18, y: 7)
+        }
+        .opacity(listOpen ? 1 : 0)
+        .offset(y: listOpen ? 0 : 8)
+        .motion(listOpen ? Motion.pop : Motion.leave, value: listOpen)
+        .allowsHitTesting(listOpen)
         .background(FrameAnchorView(anchor: listAnchor))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Commands")
+        .accessibilityHidden(!listOpen)
     }
 
     @ViewBuilder private func card(_ row: Row, highlighted: Bool) -> some View {
@@ -559,12 +574,13 @@ private struct CommandCard: View {
             .padding(.leading, 10)
             .padding(.trailing, 12)
             .padding(.vertical, 9)
-            .background(RoundedRectangle(cornerRadius: 11).fill(fill))
+            .background(fill)
             .overlay(RoundedRectangle(cornerRadius: 11)
-                .strokeBorder(highlighted ? Theme.accent : Theme.border,
+                .strokeBorder(stroke,
                               style: StrokeStyle(lineWidth: highlighted ? 1.5 : 1,
                                                  dash: dashed && !highlighted ? [4, 3] : [])))
-            .shadow(color: .black.opacity(dashed ? 0 : 0.09), radius: 7, y: 4)
+            // Only a hairline: the tray under the cards does the lifting.
+            .shadow(color: .black.opacity(dashed ? 0 : 0.05), radius: 1, y: 1)
             .contentShape(RoundedRectangle(cornerRadius: 11))
         }
         .buttonStyle(.plain)
@@ -575,9 +591,28 @@ private struct CommandCard: View {
         .accessibilityAddTraits(highlighted ? .isSelected : [])
     }
 
-    private var fill: Color {
-        hovering || highlighted ? Theme.field.opacity(0.6) : Theme.card
+    // Every fill is solid. `field` is see-through, so it is only ever laid over a card,
+    // never used on its own. A dashed row stays clear until touched, because the tray
+    // under it is already opaque.
+    private var fill: some View {
+        let shape = RoundedRectangle(cornerRadius: 11)
+        return ZStack {
+            shape.fill(dashed && !hovering && !highlighted ? Color.clear : Theme.card)
+            if hovering && !dashed {
+                shape.fill(Theme.field.opacity(0.6))
+            }
+        }
     }
+
+    private var stroke: Color {
+        if highlighted { return Theme.accent }
+        return dashed ? Self.dashedBorder : Theme.border
+    }
+
+    // Strong enough for the dashes to read on the tray's sidebar fill.
+    private static let dashedBorder = Theme.adaptive(
+        light: NSColor(srgbRed: 0.46, green: 0.42, blue: 0.34, alpha: 0.28),
+        dark: NSColor(srgbRed: 1, green: 1, blue: 1, alpha: 0.22))
 
     @ViewBuilder private var detailLine: some View {
         switch detail {
