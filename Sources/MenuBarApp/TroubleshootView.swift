@@ -195,7 +195,7 @@ struct TroubleshootView: View {
             .frame(maxHeight: 560)
             footer
         }
-        .frame(minWidth: 560, idealWidth: 760, maxWidth: 760)
+        .frame(width: 760)
         .disabled(isStarting)
         .interactiveDismissDisabled(isStarting)
         .background(Theme.background)

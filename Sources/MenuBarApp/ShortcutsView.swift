@@ -8,7 +8,6 @@ struct ShortcutsView: View {
     @State private var draft: ShortcutDraft?
     @State private var query = ""
     @State private var saveStatus = ""
-    @State private var sheetWidth: CGFloat = 1184
 
     private var shortcuts: [Shortcut] { store.macShortcuts }
     private var matches: [Shortcut] { store.libraryShortcuts(query: query) }
@@ -19,23 +18,17 @@ struct ShortcutsView: View {
             if let error = store.loadError ?? store.saveError {
                 WarningStrip(error, icon: "externaldrive.badge.exclamationmark")
             }
-            GeometryReader { geometry in
-                let narrow = geometry.size.width < 720
-                let layout = narrow ? AnyLayout(VStackLayout(spacing: 0))
-                                    : AnyLayout(HStackLayout(spacing: 0))
-                layout {
-                    library
-                        .frame(width: narrow ? nil : (geometry.size.width < 1000 ? 310 : 348),
-                               height: narrow ? min(380, max(300, geometry.size.height * 0.5)) : nil)
-                    Divider().overlay(Theme.hairline)
-                    editor
-                }
+            HStack(spacing: 0) {
+                library.frame(width: 340)
+                Divider().overlay(Theme.hairline)
+                editor
             }
         }
-        .frame(minWidth: 390, idealWidth: 1184, maxWidth: 1184,
-               minHeight: 400, idealHeight: 780, maxHeight: 780)
+        // A sheet with a flexible width opens at its narrowest over a small window, so the
+        // width is fixed, as it is for Settings.
+        .frame(width: 960)
+        .frame(minHeight: 400, idealHeight: 780, maxHeight: 780)
         .background(Theme.background)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sheetWidth = $0 }
         .interactiveDismissDisabled(draft?.isDirty == true)
         .onAppear {
             if draft == nil {
@@ -48,7 +41,7 @@ struct ShortcutsView: View {
     private var header: some View {
         HStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Shortcuts").font(.serif(sheetWidth < 720 ? 26 : 32, .semibold))
+                Text("Shortcuts").font(.serif(32, .semibold))
                     .lineLimit(1)
                     .fixedSize()
                 Text("\(shortcuts.count) saved on this Mac · \(shortcuts.count(where: \.availableInAllProjects)) available in all projects")
@@ -57,7 +50,7 @@ struct ShortcutsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
-            ActionButton(title: sheetWidth < 720 ? "Add" : "Add shortcut", tone: .green, height: 38, size: 12, icon: "plus") {
+            ActionButton(title: "Add shortcut", tone: .green, height: 38, size: 12, icon: "plus") {
                 guardChanges { add() }
             }
             .accessibilityLabel("Add shortcut")
@@ -66,7 +59,7 @@ struct ShortcutsView: View {
             }
             .accessibilityLabel("Close shortcuts")
         }
-        .padding(.horizontal, sheetWidth < 720 ? 20 : 28)
+        .padding(.horizontal, 28)
         .padding(.vertical, 22)
         .background(Theme.card)
         .overlay(alignment: .bottom) { Divider().overlay(Theme.hairline) }
@@ -144,7 +137,7 @@ struct ShortcutsView: View {
                 Button { remove(draft) } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "trash")
-                        if sheetWidth >= 720 { Text("Remove shortcut") }
+                        Text("Remove shortcut")
                     }
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)

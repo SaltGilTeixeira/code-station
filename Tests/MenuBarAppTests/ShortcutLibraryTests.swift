@@ -80,8 +80,7 @@ struct ShortcutLibraryTests {
         #expect(try String(contentsOf: url, encoding: .utf8) == "invalid")
     }
 
-    @Test(arguments: [CGFloat(390), CGFloat(1184)])
-    func sheetFitsDesktopAndNarrowWindows(width: CGFloat) throws {
+    @Test func sheetKeepsItsWidthOverANarrowWindow() throws {
         let store = ShortcutStore(storageURL: scratch.path("shortcuts.json"), siteDefaults: SiteDefaults())
         let examples = [
             Shortcut(name: "Qwen 3", text: "ollama run qwen3.8:27b-mlx", icon: "terminal"),
@@ -93,20 +92,20 @@ struct ShortcutLibraryTests {
         let host = NSHostingView(rootView: ShortcutsView()
             .environment(store)
             .appOverlays())
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 780),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 390, height: 780),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         window.center()
         window.contentView = host
         window.layoutIfNeeded()
         RunLoop.main.run(until: Date().addingTimeInterval(0.1))
         host.layoutSubtreeIfNeeded()
-        #expect(host.frame.width <= width)
+        #expect(host.fittingSize.width == 960)
         #expect(host.frame.height <= 780)
         if let directory = ProcessInfo.processInfo.environment["SHORTCUT_SNAPSHOTS"],
            let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
             host.cacheDisplay(in: host.bounds, to: bitmap)
             try bitmap.representation(using: .png, properties: [:])?.write(
-                to: URL(fileURLWithPath: directory).appendingPathComponent("shortcuts-command-\(Int(width)).png"))
+                to: URL(fileURLWithPath: directory).appendingPathComponent("shortcuts-command.png"))
         }
     }
 }
