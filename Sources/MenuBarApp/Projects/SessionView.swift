@@ -634,21 +634,13 @@ struct SessionView: View {
         .headerBand(Theme.statusBand, height: Self.destinationDeckHeight)
     }
 
-    // What the pane can open beside where you already are: the panel toggles, the saved
-    // prompts, then what the session itself offers. A hairline closes each group, so the
+    // What the pane can open beside where you already are: the panel toggles, then what
+    // the session itself offers. A hairline closes each group, so the
     // rail reads as a few things rather than as a row of icons.
     private func rail(session: ChatSession, project: Project, recap: SessionRecap?,
                       fit: HeaderFit) -> some View {
         HStack(spacing: 9) {
             panelToggles(session: session, project: project)
-            // An ad-hoc task runs in a private folder made for one prompt, so there is no
-            // project behind it to have saved any.
-            if project.kind == .project, !promptsBlocked(session: session, project: project) {
-                SessionPromptShortcuts(session: session,
-                                       conversationID: visibleConversationID,
-                                       folded: fit == .folded,
-                                       edit: { shortcutEditor = $0 })
-            }
             if hasUtilities(session: session) {
                 HeaderRailDivider()
                 if fit == .whole {
@@ -1973,7 +1965,7 @@ struct SessionView: View {
     // controls. What the session has done and where belongs on the status strip, not
     // here - this line is only ever about what happens next.
     //
-    // The saved commands sit at the end of it for the same reason. Running the tests for
+    // The saved commands and prompts sit at the end of it for the same reason. Running the tests for
     // what was just written is the next thing that happens as much as sending another
     // prompt is, and docking them here keeps them off a status strip that has to stay one
     // glance wide however many commands a project collects.
@@ -1991,6 +1983,9 @@ struct SessionView: View {
                 // and fit themselves to whatever is left of it once there are more of
                 // them than it can hold.
                 SessionShortcutChips(session: session,
+                                     conversationID: visibleConversationID,
+                                     offersPrompts: !promptsBlocked(session: session,
+                                                                    project: project),
                                      edit: { shortcutEditor = $0 })
                     .frame(maxWidth: .infinity, alignment: .trailing)
             } else {

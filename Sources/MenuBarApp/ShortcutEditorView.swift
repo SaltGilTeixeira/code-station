@@ -142,14 +142,14 @@ struct ShortcutEditorView: View {
         case .command:
             "A shell command, offered as a chip beside the composer."
         case .prompt:
-            "A prompt for the agent, offered on the icon rail above the session."
+            "A prompt for the agent, offered as a chip beside the composer."
         }
     }
 
     private var iconDetail: String {
         kind == .command
             ? "Drawn on the chip beside the name. A shortcut needs no icon."
-            : "The rail has room for the glyph alone, so a prompt with no icon gets a generic one."
+            : "Drawn on the chip beside the name. A prompt with no icon gets a generic one."
     }
 
     // A project-only shortcut needs no note: the text below already says where it lands.
