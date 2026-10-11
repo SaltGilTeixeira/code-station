@@ -270,6 +270,7 @@ private struct AgentPill: View {
         .overlay(Capsule().strokeBorder(Theme.border))
         .contentShape(Capsule())
         .fixedSize()
+        .accessibilityElement(children: .ignore)
     }
 }
 
