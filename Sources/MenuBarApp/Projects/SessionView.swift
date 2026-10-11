@@ -1504,13 +1504,11 @@ struct SessionView: View {
             .onChange(of: runner.lastTurnEnding(sessionID)) { _, ending in
                 guard handoffArrival.observe(ending, visible: opened && transcriptPinnedToBottom),
                       let ending, !runner.state(sessionID).isBusy,
-                      let handoff = TurnHandoff(messages: session.messages, projectPath: projectPath)
+                      let receipt = TurnReceipt(lastTurnIn: session.messages, projectPath: projectPath)
                 else { return }
                 arrivingEnding = ending.ended
-                let warning = handoff.failedCommands.isEmpty ? ""
-                    : ". " + TurnHandoff.warning(handoff.failedCommands.count)
                 NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
-                    userInfo: [.announcement: handoff.receipt.spokenSummary(ending) + warning,
+                    userInfo: [.announcement: receipt.spokenSummary(ending),
                                .priority: NSAccessibilityPriorityLevel.medium.rawValue])
             }
             .task(id: sessionID) {
@@ -1629,12 +1627,11 @@ struct SessionView: View {
             }
 
             if !state.isBusy, let ending = runner.lastTurnEnding(sessionID),
-               let handoff = TurnHandoff(messages: session.messages, projectPath: projectPath) {
-                TurnSeal(ending: ending, receipt: handoff.receipt,
+               let receipt = TurnReceipt(lastTurnIn: session.messages, projectPath: projectPath) {
+                TurnSeal(ending: ending, receipt: receipt,
                          reviewed: reviewedEnding == ending.ended,
                          arriving: arrivingEnding == ending.ended,
                          focusReview: focusHandoffReview,
-                         failedCommands: handoff.failedCommands, projectPath: projectPath,
                          review: runner.question(sessionID) == nil ? {
                              reviewingEnding = ending.ended
                              focusHandoffReview = false

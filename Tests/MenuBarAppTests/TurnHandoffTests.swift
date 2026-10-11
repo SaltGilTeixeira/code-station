@@ -7,42 +7,6 @@ import Testing
 struct TurnHandoffTests {
     private let ended = Date(timeIntervalSinceReferenceDate: 321)
 
-    @Test func warningsKeepActualFailuresInTheLatestTurnEvenAfterAnIsolatedRerun() throws {
-        let failure = ToolUse(id: "full", name: "Bash", input: "swift test",
-                              result: "1 test failed", exitCode: 1)
-        let denied = ToolUse(id: "denied", name: "Bash", input: "npm test",
-                             result: "Permission denied", isError: true)
-        let handoff = try #require(TurnHandoff(messages: [
-            ChatMessage(role: .user, text: "earlier"),
-            ChatMessage(role: .assistant, tools: [failure]),
-            ChatMessage(role: .user, text: "current"),
-            ChatMessage(role: .assistant, tools: [
-                failure, denied,
-                ToolUse(id: "rerun", name: "Bash", input: "swift test --filter LayoutTests",
-                        result: "Passed", exitCode: 0),
-                ToolUse(id: "pending", name: "Bash", input: "swift test", isError: true),
-                ToolUse(id: "read", name: "Read", input: "missing.swift", result: "Missing", isError: true)
-            ])
-        ], projectPath: "/repo"))
-        #expect(handoff.failedCommands.map(\.id) == ["full", "denied"])
-        #expect(handoff.failedCommands.first?.result == "1 test failed")
-        #expect(!handoff.receipt.hasChanges)
-    }
-
-    @Test func earlierFailuresDoNotLeakIntoANewTurn() throws {
-        let handoff = try #require(TurnHandoff(messages: [
-            ChatMessage(role: .user, text: "earlier"),
-            ChatMessage(role: .assistant, tools: [
-                ToolUse(id: "failure", name: "Bash", input: "swift test", result: "Failed", isError: true)
-            ]),
-            ChatMessage(role: .user, text: "current"),
-            ChatMessage(role: .assistant, text: "No changes needed.")
-        ], projectPath: "/repo"))
-        #expect(handoff.failedCommands.isEmpty)
-        #expect(!handoff.receipt.hasChanges)
-        #expect(TurnHandoff(messages: [], projectPath: "/repo") == nil)
-    }
-
     @Test func revisitingARecentEndingNeverReplaysItsArrival() {
         let ending = TurnEnding(started: ended.addingTimeInterval(-321), ended: ended, outcome: .finished)
         var arrival = TurnHandoffArrival()
@@ -102,16 +66,14 @@ struct TurnHandoffLayoutTests {
         }
     }
 
-    @Test func warningSitsBelowTheRowAndNoChangesStaysCompact() {
-        let warning = measure(width: 600, warning: true)
-        #expect(abs(warning.height - 67) < 1)
+    @Test func noChangesStaysCompact() {
         let noChanges = measure(width: 300, changes: false)
         #expect(abs(noChanges.height - 44) < 1)
         #expect(noChanges.width <= 300)
     }
 
     private func measure(width: CGFloat, outcome: TurnEnding.Outcome = .finished,
-                         reviewed: Bool = false, changes: Bool = true, warning: Bool = false) -> CGSize {
+                         reviewed: Bool = false, changes: Bool = true) -> CGSize {
         let measured = Measurement()
         let ending = TurnEnding(started: Date(timeIntervalSinceReferenceDate: 0),
                                 ended: Date(timeIntervalSinceReferenceDate: 321), outcome: outcome)
@@ -119,14 +81,12 @@ struct TurnHandoffLayoutTests {
             TurnSeal(ending: ending,
                      receipt: changes ? TurnReceipt(added: 44, removed: 10, files: 4) : TurnReceipt(),
                      reviewed: reviewed,
-                     failedCommands: warning ? [ToolUse(id: "test", name: "Bash", input: "swift test",
-                                                       result: "Failed", exitCode: 1)] : [],
                      review: {})
                 .background(GeometryReader { proxy in
                     Color.clear.onAppear { measured.size = proxy.size }
                 })
             Spacer(minLength: 0)
-        }.environment(DialogPresenter()))
+        })
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: 240),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = view
