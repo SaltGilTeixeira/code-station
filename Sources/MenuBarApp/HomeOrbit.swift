@@ -4,8 +4,8 @@ import SwiftUI
 // it can be checked without drawing anything.
 //
 // Projects take a left and a right column so their sessions always have room to reach
-// outward, away from the hub. A column grows the map taller rather than squeezing its
-// rows, so a busy day pushes the card down instead of laying sessions over each other.
+// outward, away from the hub. The map is only as tall as its busiest column, and a column
+// grows the map rather than squeezing its rows, so sessions are never laid over each other.
 struct OrbitLayout {
     struct Node: Identifiable {
         let group: HomeWorkMap.Group
@@ -21,10 +21,10 @@ struct OrbitLayout {
     }
 
     struct More: Identifiable {
-        let id: UUID
+        let group: HomeWorkMap.Group
         let count: Int
-        let name: String
         let frame: CGRect
+        var id: UUID { group.id }
     }
 
     struct Wire: Identifiable {
@@ -37,25 +37,30 @@ struct OrbitLayout {
         let trunk: Bool
     }
 
-    static let minHeight: CGFloat = 540
-    static let emptyHeight: CGFloat = 420
-    static let hubSide: CGFloat = 176
-    static let tileSide: CGFloat = 48
-    static let pillHeight: CGFloat = 34
-    static let tallPillHeight: CGFloat = 48
-    static let pillGap: CGFloat = 8
-    static let shownPerProject = 3
+    static let hubSide: CGFloat = 136
+    static let tileSide: CGFloat = 40
+    static let pillHeight: CGFloat = 32
+    static let tallPillHeight: CGFloat = 44
+    static let pillGap: CGFloat = 7
+    static let shownPerProject = 2
+    static let maxProjects = 5
+    static let maxSessions = 10
     // A narrower map leaves the session pills too short to read a title in.
     static let minWidth: CGFloat = 860
+    // A tile sits this far above the middle of its row, so the name under it stays inside
+    // the row.
+    static let tileLift: CGFloat = 8
+    // Room for the hub, so a map with one project in each column still holds it.
+    static let minHeight: CGFloat = hubSide + 2 * margin + 20
 
     // How much height a project takes when it has a single session: the tile, its halo and
     // the name under it.
-    private static let nodeExtent: CGFloat = 92
-    private static let margin: CGFloat = 40
-    private static let rowGap: CGFloat = 22
-    // Past this a column with only two projects would push them to the corners.
-    private static let widestRowGap: CGFloat = 96
-    private static let pillReach: CGFloat = 52
+    private static let nodeExtent: CGFloat = 74
+    private static let margin: CGFloat = 14
+    private static let rowGap: CGFloat = 18
+    private static let pillReach: CGFloat = 46
+    // The name under a tile stops short of the pills beside it.
+    static let nameWidth: CGFloat = 2 * pillReach - 8
 
     let size: CGSize
     let hub: CGPoint
@@ -84,44 +89,36 @@ struct OrbitLayout {
         }
         func extent(_ group: HomeWorkMap.Group) -> CGFloat { max(Self.nodeExtent, stack(group).height) }
 
-        let available = Self.minHeight - 2 * Self.margin
-        let spacing = columns.map { column, _ -> (gap: CGFloat, height: CGFloat) in
-            let total = column.map(extent).reduce(0, +)
-            guard column.count > 1 else { return (0, total) }
-            let gap = min(max(Self.rowGap, (available - total) / CGFloat(column.count - 1)),
-                          Self.widestRowGap)
-            return (gap, total + gap * CGFloat(column.count - 1))
+        let columnHeights = columns.map { column, _ in
+            column.map(extent).reduce(0, +) + Self.rowGap * CGFloat(max(column.count - 1, 0))
         }
-
-        let height = groups.isEmpty
-            ? Self.emptyHeight
-            : max(Self.minHeight, (spacing.map(\.height).max() ?? 0) + 2 * Self.margin)
+        let height = max(Self.minHeight, (columnHeights.max() ?? 0) + 2 * Self.margin)
         size = CGSize(width: width, height: height)
         let centerX = width / 2
-        let centerY = groups.isEmpty ? 170 : height / 2
+        let centerY = height / 2
         hub = CGPoint(x: centerX, y: centerY)
 
-        let reach = min(300, max(190, width * 0.22))
-        pillWidth = min(260, centerX - reach - 62)
+        let reach = min(250, max(176, width * 0.2))
+        pillWidth = min(250, centerX - reach - Self.pillReach - 30)
+        let tileEdge = Self.tileSide / 2 + 7
 
         for (index, (column, left)) in columns.enumerated() {
-            var top = centerY - spacing[index].height / 2
+            var top = centerY - columnHeights[index] / 2
             for group in column {
                 let rowHeight = extent(group)
                 let y = top + rowHeight / 2
                 // Rows further from the middle bend in towards the hub, which is what turns
                 // two columns into an orbit.
-                let bend = min(abs(y - centerY), 200) * 0.32
+                let bend = min(abs(y - centerY), 160) * 0.32
                 let x = left ? centerX - reach + bend : centerX + reach - bend
-                nodes.append(Node(group: group, center: CGPoint(x: x, y: y), left: left))
+                let tile = CGPoint(x: x, y: y - Self.tileLift)
+                nodes.append(Node(group: group, center: tile, left: left))
 
-                let busiest: Wire.Kind = group.sessions.contains(where: \.needsAttention) ? .attention
-                    : group.sessions.contains(where: { $0.tone == .running }) ? .running : .quiet
                 wires.append(Wire(id: "hub:\(group.id)",
                                   start: CGPoint(x: centerX + (left ? -1 : 1) * Self.hubSide / 2,
                                                  y: centerY),
-                                  end: CGPoint(x: x + (left ? 1 : -1) * (Self.tileSide / 2 + 7), y: y),
-                                  kind: busiest, trunk: true))
+                                  end: CGPoint(x: x + (left ? 1 : -1) * tileEdge, y: tile.y),
+                                  kind: Self.kind(of: group.sessions), trunk: true))
 
                 let (shown, hidden, stackHeight) = stack(group)
                 let pillX = left ? x - Self.pillReach - pillWidth : x + Self.pillReach
@@ -130,19 +127,17 @@ struct OrbitLayout {
                     let frame = CGRect(x: pillX, y: pillY, width: pillWidth, height: Self.height(of: live))
                     pills.append(Pill(live: live, frame: frame))
                     wires.append(Wire(id: "session:\(live.id)",
-                                      start: CGPoint(x: x + (left ? -1 : 1) * (Self.tileSide / 2 + 7), y: y),
+                                      start: CGPoint(x: x + (left ? -1 : 1) * tileEdge, y: tile.y),
                                       end: CGPoint(x: left ? frame.maxX : frame.minX, y: frame.midY),
-                                      kind: live.needsAttention ? .attention
-                                          : live.tone == .running ? .running : .quiet,
-                                      trunk: false))
+                                      kind: Self.kind(of: [live]), trunk: false))
                     pillY = frame.maxY + Self.pillGap
                 }
                 if hidden > 0 {
-                    more.append(More(id: group.id, count: hidden, name: group.identity.containerName,
+                    more.append(More(group: group, count: hidden,
                                      frame: CGRect(x: pillX, y: pillY, width: pillWidth,
                                                    height: Self.pillHeight)))
                 }
-                top += rowHeight + spacing[index].gap
+                top += rowHeight + Self.rowGap
             }
         }
     }
@@ -150,6 +145,119 @@ struct OrbitLayout {
     // A session that needs you is the one tall shape on the map, so it is found first.
     static func height(of live: HomeLive) -> CGFloat {
         live.needsAttention ? tallPillHeight : pillHeight
+    }
+
+    // A wire takes the state of the busiest thing it leads to.
+    static func kind(of sessions: [HomeLive]) -> Wire.Kind {
+        sessions.contains(where: \.needsAttention) ? .attention
+            : sessions.contains(where: { $0.tone == .running }) ? .running : .quiet
+    }
+}
+
+// Where everything sits on the rail, the map for a short list: the hub on the left, each
+// project's tile beside it, and a row for every session that runs to the edge of the card,
+// so a handful of sessions use the width instead of leaving it empty.
+struct RailLayout {
+    static let hubSide: CGFloat = 112
+    static let rowHeight: CGFloat = 50
+    static let tallRowHeight: CGFloat = 56
+    static let maxProjects = 2
+    static let maxSessions = 4
+    // Below this a row is too short to hold its title next to its buttons.
+    static let minWidth: CGFloat = 600
+    static let nameWidth: CGFloat = 120
+
+    private static let rowGap: CGFloat = 8
+    private static let groupGap: CGFloat = 16
+    private static let tileExtent: CGFloat = 80
+
+    let size: CGSize
+    let hub: CGPoint
+    private(set) var nodes: [OrbitLayout.Node] = []
+    private(set) var rows: [OrbitLayout.Pill] = []
+    private(set) var wires: [OrbitLayout.Wire] = []
+
+    var motionKey: [CGRect] {
+        nodes.map { CGRect(origin: $0.center, size: .zero) } + rows.map(\.frame)
+    }
+
+    init(map: HomeWorkMap, width: CGFloat) {
+        let blocks = map.groups.map { group in
+            let heights = group.sessions.map(Self.height(of:))
+            let stack = heights.reduce(0, +) + Self.rowGap * CGFloat(heights.count - 1)
+            return (group: group, heights: heights, stack: stack, extent: max(Self.tileExtent, stack))
+        }
+        let content = blocks.map(\.extent).reduce(0, +) + Self.groupGap * CGFloat(max(blocks.count - 1, 0))
+        let height = max(Self.hubSide + 12, content)
+        size = CGSize(width: width, height: height)
+        let centerY = height / 2
+        hub = CGPoint(x: Self.hubSide / 2 + 4, y: centerY)
+
+        let tileX = Self.hubSide + 108
+        let tileEdge = OrbitLayout.tileSide / 2 + 7
+        let rowX = tileX + OrbitLayout.tileSide / 2 + 50
+        var top = centerY - content / 2
+        for block in blocks {
+            // A tile taller than its rows is lifted, so the name under it stays in the block.
+            let y = top + block.extent / 2 - (block.extent > block.stack ? OrbitLayout.tileLift : 0)
+            nodes.append(OrbitLayout.Node(group: block.group, center: CGPoint(x: tileX, y: y), left: false))
+            wires.append(OrbitLayout.Wire(id: "hub:\(block.group.id)",
+                                          start: CGPoint(x: hub.x + Self.hubSide / 2, y: centerY),
+                                          end: CGPoint(x: tileX - tileEdge, y: y),
+                                          kind: OrbitLayout.kind(of: block.group.sessions), trunk: true))
+            var rowY = y - block.stack / 2
+            for (live, rowHeight) in zip(block.group.sessions, block.heights) {
+                let frame = CGRect(x: rowX, y: rowY, width: width - rowX, height: rowHeight)
+                rows.append(OrbitLayout.Pill(live: live, frame: frame))
+                wires.append(OrbitLayout.Wire(id: "session:\(live.id)",
+                                              start: CGPoint(x: tileX + tileEdge, y: y),
+                                              end: CGPoint(x: frame.minX, y: frame.midY),
+                                              kind: OrbitLayout.kind(of: [live]), trunk: false))
+                rowY = frame.maxY + Self.rowGap
+            }
+            top += block.extent + Self.groupGap
+        }
+    }
+
+    static func height(of live: HomeLive) -> CGFloat {
+        live.needsAttention ? tallRowHeight : rowHeight
+    }
+}
+
+// The rail drawn: the hub, a tile for each project, and a row for each session with its
+// buttons on it, so a request is answered right there.
+struct RailMap: View {
+    let map: HomeWorkMap
+    let width: CGFloat
+    let hasChanges: (HomeLive) -> Bool
+    let open: (HomeLive, SessionDestination) -> Void
+    let answer: (HomeLive, PermissionAnswer) -> Void
+
+    var body: some View {
+        let layout = RailLayout(map: map, width: width)
+        ZStack(alignment: .topLeading) {
+            OrbitWires(wires: layout.wires)
+
+            OrbitHub(map: map, side: RailLayout.hubSide, ringWidth: 6, numberSize: 30)
+                .position(layout.hub)
+
+            ForEach(layout.nodes) { node in
+                OrbitProjectTile(group: node.group)
+                    .position(node.center)
+                OrbitTileName(name: node.group.identity.containerName, width: RailLayout.nameWidth)
+                    .position(x: node.center.x, y: node.center.y + OrbitTileName.offset)
+            }
+
+            ForEach(layout.rows) { row in
+                let live = row.live
+                HomeMapActionRow(live: live, hasChanges: hasChanges(live),
+                                 open: { open(live, $0) }, answer: { answer(live, $0) })
+                    .frame(width: row.frame.width, height: row.frame.height)
+                    .position(x: row.frame.midX, y: row.frame.midY)
+            }
+        }
+        .frame(width: layout.size.width, height: layout.size.height)
+        .motion(HomeWorkMapView.reflow, value: layout.motionKey)
     }
 }
 
@@ -163,6 +271,7 @@ struct OrbitMap: View {
     let hasChanges: (HomeLive) -> Bool
     let open: (HomeLive, SessionDestination) -> Void
     let answer: (HomeLive, PermissionAnswer) -> Void
+    let reveal: (HomeWorkMap.Group) -> Void
 
     @State private var selected: UUID?
     @State private var cardHeight: CGFloat = 190
@@ -174,15 +283,14 @@ struct OrbitMap: View {
                 .contentShape(Rectangle())
                 .onTapGesture { selected = nil }
 
-            // Two faint orbits, so the map keeps its shape even when nothing is on it.
-            let room = 2 * min(layout.hub.y, layout.size.height - layout.hub.y)
+            // Two faint orbits, sized from the map so they keep its shape at any height.
             Group {
                 Ellipse()
                     .stroke(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    .frame(width: 420, height: min(300, room - 40))
+                    .frame(width: 380, height: min(220, layout.size.height - 28))
                 Ellipse()
                     .stroke(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    .frame(width: min(760, width - 40), height: min(470, room - 10))
+                    .frame(width: min(760, width - 40), height: layout.size.height - 8)
             }
             .position(layout.hub)
             .allowsHitTesting(false)
@@ -193,27 +301,11 @@ struct OrbitMap: View {
             OrbitHub(map: map)
                 .position(layout.hub)
 
-            if map.active.isEmpty {
-                VStack(spacing: 8) {
-                    Text("Room for your next idea").font(.serif(20, .semibold))
-                    Text("Nothing is running. Start something new, or pick up where you left off.")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(width: 420)
-                .position(x: layout.hub.x, y: layout.hub.y + OrbitLayout.hubSide / 2 + 56)
-            }
-
             ForEach(layout.nodes) { node in
                 OrbitProjectTile(group: node.group)
                     .position(node.center)
-                Text(node.group.identity.containerName)
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .lineLimit(1)
-                    .frame(width: 130)
-                    .position(x: node.center.x, y: node.center.y + OrbitLayout.tileSide / 2 + 19)
+                OrbitTileName(name: node.group.identity.containerName, width: OrbitLayout.nameWidth)
+                    .position(x: node.center.x, y: node.center.y + OrbitTileName.offset)
             }
 
             ForEach(layout.pills) { pill in
@@ -225,13 +317,8 @@ struct OrbitMap: View {
             }
 
             ForEach(layout.more) { more in
-                Text("+\(more.count) more in \(more.name)")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .padding(.horizontal, 13)
-                    .frame(width: more.frame.width, height: more.frame.height, alignment: .leading)
-                    .cardSurface(cornerRadius: more.frame.height / 2)
+                OrbitMoreChip(more: more) { reveal(more.group) }
+                    .frame(width: more.frame.width, height: more.frame.height)
                     .position(x: more.frame.midX, y: more.frame.midY)
             }
 
@@ -244,12 +331,17 @@ struct OrbitMap: View {
         .onExitCommand { selected = nil }
     }
 
-    // Under the session when it fits, above it when it would run off the bottom of the map.
+    // Under the session when it fits, above it when it would run off the bottom. The map
+    // can be shorter than the card, so the card may hang over the card's own padding and
+    // heading, but never past them.
     private func card(for pill: OrbitLayout.Pill, in layout: OrbitLayout) -> some View {
         let half = OrbitSessionCard.width / 2
         let x = min(max(pill.frame.midX, half + 10), layout.size.width - half - 10)
-        let below = pill.frame.maxY + 10 + cardHeight <= layout.size.height - 6
-        let y = below ? pill.frame.maxY + 10 + cardHeight / 2 : pill.frame.minY - 10 - cardHeight / 2
+        let lowest = layout.size.height + 14
+        let highest: CGFloat = -30
+        let below = pill.frame.maxY + 10 + cardHeight <= lowest
+        let top = below ? pill.frame.maxY + 10 : pill.frame.minY - 10 - cardHeight
+        let y = max(min(top, lowest - cardHeight), highest) + cardHeight / 2
         let live = pill.live
         return OrbitSessionCard(
             live: live,
@@ -263,11 +355,53 @@ struct OrbitMap: View {
                 answer(live, given)
             })
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
-            .position(x: x, y: min(max(y, cardHeight / 2 + 6), layout.size.height - cardHeight / 2 - 6))
+            .position(x: x, y: y)
             .zIndex(2)
             .transition(.opacity)
     }
 }
+
+private struct OrbitTileName: View {
+    let name: String
+    let width: CGFloat
+
+    // From the middle of a tile to the middle of the name under it.
+    static let offset: CGFloat = OrbitLayout.tileSide / 2 + 18
+
+    var body: some View {
+        Text(name)
+            .font(.system(size: 11.5, weight: .semibold))
+            .lineLimit(1)
+            .frame(width: width)
+    }
+}
+
+// The sessions a project has past the ones the orbit shows. Clicking it opens the project
+// in the sidebar, where every session is listed.
+private struct OrbitMoreChip: View {
+    let more: OrbitLayout.More
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        let name = more.group.identity.containerName
+        Button(action: action) {
+            Text("+\(more.count) more in \(name)")
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(hovering ? .primary : .secondary)
+                .lineLimit(1)
+                .padding(.horizontal, 13)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .cardSurface(cornerRadius: OrbitLayout.pillHeight / 2)
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityHint("Shows \(name) in the sidebar")
+    }
+}
+
 
 // The lines from the hub to each project and on to its sessions. A line flows while what
 // it leads to is running, and stands still otherwise, so motion on the map always means
@@ -385,43 +519,52 @@ final class FlowingWiresView: LoopLayerView {
 }
 
 // The middle of the map. The ring has one arc for every session, in the colour of its
-// state, so the overall picture reads before any label does.
-private struct OrbitHub: View {
+// state, so the overall picture reads before any label does. Smaller hubs drop the
+// caption and then the chip, keeping the count.
+struct OrbitHub: View {
     let map: HomeWorkMap
+    var side: CGFloat = OrbitLayout.hubSide
+    var ringWidth: CGFloat = 7
+    var numberSize: CGFloat = 38
 
-    private static let radius: CGFloat = 80
-    private static let ringWidth: CGFloat = 8
     // The space left between two arcs, measured along the ring.
-    private static let arcGap: CGFloat = 14
+    private static let arcGap: CGFloat = 7
+
+    private var radius: CGFloat { side / 2 - ringWidth / 2 - 2 }
 
     var body: some View {
         let arcs = arcs
+        let core = side - 2 * ringWidth - 14
         ZStack {
             Circle()
-                .stroke(Theme.hairline, lineWidth: Self.ringWidth)
-                .frame(width: Self.radius * 2, height: Self.radius * 2)
+                .stroke(Theme.hairline, lineWidth: ringWidth)
+                .frame(width: radius * 2, height: radius * 2)
             ForEach(arcs.indices, id: \.self) { index in
                 HubArc(start: arcs[index].start, end: arcs[index].end)
                     .stroke(arcs[index].colour,
-                            style: StrokeStyle(lineWidth: Self.ringWidth, lineCap: .round))
-                    .frame(width: Self.radius * 2, height: Self.radius * 2)
+                            style: StrokeStyle(lineWidth: ringWidth, lineCap: .round))
+                    .frame(width: radius * 2, height: radius * 2)
             }
             VStack(spacing: 2) {
                 Text("\(map.runningCount)")
-                    .font(.serif(46, .medium))
+                    .font(.serif(numberSize, .medium))
                     .monospacedDigit()
                     .foregroundStyle(Theme.accent)
-                Text(caption)
-                    .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-                chip.padding(.top, 6)
+                if side >= 120 {
+                    Text(caption)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                }
+                if side >= 100 {
+                    chip.padding(.top, 3)
+                }
             }
-            .frame(width: 132, height: 132)
+            .frame(width: core, height: core)
             .background(Circle().fill(Theme.card))
             .overlay(Circle().stroke(Theme.border))
-            .shadow(color: .black.opacity(0.12), radius: 15, y: 10)
+            .shadow(color: .black.opacity(0.09), radius: 9, y: 8)
         }
-        .frame(width: OrbitLayout.hubSide, height: OrbitLayout.hubSide)
+        .frame(width: side, height: side)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(counted(map.runningCount, "session")) working, \(chipText)")
     }
@@ -441,13 +584,13 @@ private struct OrbitHub: View {
     @ViewBuilder private var chip: some View {
         if map.waiting.isEmpty {
             Text(chipText)
-                .font(.system(size: 10.5))
+                .font(.system(size: 10))
                 .foregroundStyle(.secondary)
         } else {
             Text(chipText)
-                .font(.system(size: 10.5, weight: .semibold))
+                .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(Theme.attentionText)
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 7)
                 .padding(.vertical, 2)
                 .background(Capsule().fill(Theme.attention.opacity(0.16)))
         }
@@ -457,7 +600,7 @@ private struct OrbitHub: View {
         let sessions = map.active.sorted { rank($0.tone) < rank($1.tone) }
         guard !sessions.isEmpty else { return [] }
         let share = 1 / CGFloat(sessions.count)
-        let gap = sessions.count > 1 ? Self.arcGap / (2 * .pi * Self.radius) : 0
+        let gap = sessions.count > 1 ? Self.arcGap / (2 * .pi * radius) : 0
         return sessions.enumerated().map { index, live in
             let start = CGFloat(index) * share
             let colour = switch live.tone {
@@ -527,10 +670,10 @@ private struct OrbitSessionPill: View {
 
     var body: some View {
         let needs = live.needsAttention
-        let shape = RoundedRectangle(cornerRadius: needs ? 14 : 17)
+        let shape = RoundedRectangle(cornerRadius: needs ? 13 : 16)
         Button(action: action) {
             HStack(spacing: 8) {
-                light
+                MapLight(tone: live.tone)
                 if needs {
                     VStack(alignment: .leading, spacing: 2) {
                         title
@@ -556,7 +699,7 @@ private struct OrbitSessionPill: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .overlay { PingRing(trigger: pings, cornerRadius: needs ? 14 : 17) }
+        .overlay { PingRing(trigger: pings, cornerRadius: needs ? 13 : 16) }
         .onChange(of: needs) { _, now in
             if now && !reduceMotion { pings += 1 }
         }
@@ -571,21 +714,26 @@ private struct OrbitSessionPill: View {
             .lineLimit(1)
     }
 
-    // Waiting is drawn as a ring: the session is alive, but nothing is being worked on.
-    @ViewBuilder private var light: some View {
-        if live.tone == .waiting {
-            Circle()
-                .strokeBorder(Theme.dotOn, lineWidth: 1.6)
-                .frame(width: 7, height: 7)
-        } else {
-            StateLight(tone: live.tone, size: 7)
-        }
-    }
-
     private var border: Color {
         if selected { return Theme.accent }
         if live.needsAttention { return Theme.attention.opacity(0.55) }
         return hovering ? Theme.accent.opacity(0.45) : Theme.border
+    }
+}
+
+// The light beside a session on the map. Waiting is drawn as a ring: the session is
+// alive, but nothing is being worked on.
+struct MapLight: View {
+    let tone: SessionTone
+
+    var body: some View {
+        if tone == .waiting {
+            Circle()
+                .strokeBorder(Theme.dotOn, lineWidth: 1.6)
+                .frame(width: 7, height: 7)
+        } else {
+            StateLight(tone: tone, size: 7)
+        }
     }
 }
 

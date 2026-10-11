@@ -84,7 +84,10 @@ struct HomeView: View {
                                     open: { live, destination in
                                         store.selectSession(live.id, destination: destination)
                                     },
-                                    answer: answer)
+                                    answer: answer,
+                                    reveal: reveal)
+                        // A session card on the map can hang below it, over the next section.
+                        .zIndex(1)
                     timeSpent(standing)
                     dailyTotals(standing)
                     resume(standing)
@@ -108,6 +111,14 @@ struct HomeView: View {
     private func open(_ live: HomeLive) {
         let destination = live.primaryAction(hasChanges: hasChanges(in: live.session)).destination
         store.selectSession(live.id, destination: destination)
+    }
+
+    private func reveal(_ group: HomeWorkMap.Group) {
+        if let workspace = group.identity.session.workspaceID {
+            store.selectWorkspace(workspace)
+        } else {
+            store.selectProject(group.identity.session.projectID)
+        }
     }
 
     // Answered from Home exactly as the session's own card would answer it.

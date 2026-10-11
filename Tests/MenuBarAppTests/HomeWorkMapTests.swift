@@ -100,6 +100,53 @@ struct HomeWorkMapTests {
         #expect(live(tone: .needsYou, finished: true).quickAnswers.isEmpty)
     }
 
+    // A day with one project per entry in `counts`, holding that many running sessions.
+    private func day(_ counts: [Int], tone: SessionTone = .running) -> [HomeLive] {
+        counts.enumerated().flatMap { index, count in
+            let project = UUID()
+            return (0..<count).map { _ in live(project: project, name: "Project \(index)", tone: tone) }
+        }
+    }
+
+    @Test func picksTheLayoutFromProjectsSessionsAndWidth() {
+        #expect(HomeWorkMap(sessions: [live(tone: .idle)]).layout(width: 1000) == .quiet)
+        #expect(HomeWorkMap(sessions: day([1])).layout(width: 1000) == .rail)
+        #expect(HomeWorkMap(sessions: day([2, 1])).layout(width: 1000) == .rail)
+        #expect(HomeWorkMap(sessions: day([3, 2])).layout(width: 1000) == .orbit)
+        #expect(HomeWorkMap(sessions: day([1, 1, 1])).layout(width: 1000) == .orbit)
+        #expect(HomeWorkMap(sessions: day([3, 1, 2, 1])).layout(width: 1000) == .orbit)
+        #expect(HomeWorkMap(sessions: day([6])).layout(width: 1000) == .orbit)
+        #expect(HomeWorkMap(sessions: day([11])).layout(width: 1000) == .board)
+        #expect(HomeWorkMap(sessions: day([1, 1, 1, 1, 1, 1])).layout(width: 1400) == .board)
+        // A narrow window skips the orbit, and past a point the rail too.
+        #expect(HomeWorkMap(sessions: day([3, 1, 2, 1])).layout(width: 700) == .board)
+        #expect(HomeWorkMap(sessions: day([1])).layout(width: 700) == .rail)
+        #expect(HomeWorkMap(sessions: day([1])).layout(width: 500) == .board)
+    }
+
+    @Test func railFitsOneSessionInAShortMap() {
+        let layout = RailLayout(map: HomeWorkMap(sessions: day([1])), width: 900)
+        #expect(layout.size.height == 124)
+        #expect(layout.rows.count == 1)
+        #expect(layout.rows[0].frame.maxX == 900)
+    }
+
+    @Test func railGivesEverySessionARowWithoutOverlaps() {
+        let project = UUID()
+        let sessions = [live(project: project, name: "Code Station"),
+                        live(project: project, name: "Code Station", tone: .needsYou, permission: permission),
+                        live(name: "robota")]
+        let layout = RailLayout(map: HomeWorkMap(sessions: sessions), width: 900)
+        #expect(layout.nodes.count == 2)
+        #expect(layout.rows.count == 3)
+        #expect(layout.rows.first { $0.live.needsAttention }?.frame.height == RailLayout.tallRowHeight)
+        let hub = CGRect(x: layout.hub.x - RailLayout.hubSide / 2, y: layout.hub.y - RailLayout.hubSide / 2,
+                         width: RailLayout.hubSide, height: RailLayout.hubSide)
+        let shapes = layout.rows.map(\.frame) + layout.nodes.map(tile) + [hub]
+        expectApart(shapes, in: layout.size)
+        #expect(layout.size.height < 260)
+    }
+
     @Test func orbitLaysOutABusyDayWithoutOverlaps() {
         var sessions: [HomeLive] = []
         let counts = [3, 2, 2, 1, 2, 1, 1]
@@ -112,24 +159,41 @@ struct HomeWorkMapTests {
         }
         #expect(sessions.count == 12)
         for width in [OrbitLayout.minWidth, 1000, 1400] {
-            expectNoOverlaps(OrbitLayout(map: HomeWorkMap(sessions: sessions), width: width))
+            let layout = OrbitLayout(map: HomeWorkMap(sessions: sessions), width: width)
+            #expect(layout.nodes.count == 7)
+            #expect(layout.pills.count == 11)
+            #expect(layout.more.count == 1)
+            expectNoOverlaps(layout)
         }
     }
 
-    private func expectNoOverlaps(_ layout: OrbitLayout) {
-        let width = layout.size.width
+    @Test func orbitStaysShortForAMediumDay() {
+        let project = UUID()
+        let sessions = [live(project: project), live(project: project, tone: .needsYou, permission: permission),
+                        live(project: project, tone: .waiting)] + day([1, 1, 2])
+        let map = HomeWorkMap(sessions: sessions)
+        #expect(map.layout(width: 1100) == .orbit)
+        let layout = OrbitLayout(map: map, width: 1100)
+        #expect(layout.size.height < 260)
+        expectNoOverlaps(layout)
+    }
 
-        #expect(layout.nodes.count == 7)
-        #expect(layout.pills.count == 12)
+    private func tile(_ node: OrbitLayout.Node) -> CGRect {
+        // The tile with its halo, and the name under it.
+        CGRect(x: node.center.x - 26, y: node.center.y - 26, width: 52, height: 72)
+    }
+
+    private func expectNoOverlaps(_ layout: OrbitLayout) {
         let hub = CGRect(x: layout.hub.x - OrbitLayout.hubSide / 2, y: layout.hub.y - OrbitLayout.hubSide / 2,
                          width: OrbitLayout.hubSide, height: OrbitLayout.hubSide)
-        let tiles = layout.nodes.map {
-            CGRect(x: $0.center.x - 30, y: $0.center.y - 30, width: 60, height: 76)
-        }
-        let shapes = layout.pills.map(\.frame) + tiles + [hub]
+        let shapes = layout.pills.map(\.frame) + layout.more.map(\.frame) + layout.nodes.map(tile) + [hub]
+        expectApart(shapes, in: layout.size)
+    }
+
+    private func expectApart(_ shapes: [CGRect], in size: CGSize) {
         for (index, shape) in shapes.enumerated() {
-            #expect(shape.minX >= 0 && shape.maxX <= width && shape.minY >= 0
-                    && shape.maxY <= layout.size.height)
+            #expect(shape.minX >= 0 && shape.maxX <= size.width && shape.minY >= 0
+                    && shape.maxY <= size.height)
             for other in shapes[(index + 1)...] {
                 #expect(!shape.intersects(other))
             }
@@ -151,12 +215,12 @@ struct HomeWorkMapTests {
         }
     }
 
-    @Test func orbitFoldsSessionsPastThreeIntoAChip() {
+    @Test func orbitFoldsSessionsPastTwoIntoAChip() {
         let project = UUID()
         let sessions = (0..<5).map { _ in live(project: project, name: "Busy") }
         let layout = OrbitLayout(map: HomeWorkMap(sessions: sessions), width: 1000)
         #expect(layout.pills.count == OrbitLayout.shownPerProject)
-        #expect(layout.more.map(\.count) == [2])
+        #expect(layout.more.map(\.count) == [3])
         #expect(layout.more[0].frame.minY > layout.pills.map(\.frame.maxY).max() ?? 0)
     }
 
@@ -174,10 +238,20 @@ struct HomeWorkMapTests {
         #expect(layout.pills.first { $0.id == needs.id }?.frame.height == OrbitLayout.tallPillHeight)
     }
 
-    @Test func emptyOrbitKeepsOnlyTheHub() {
-        let layout = OrbitLayout(map: HomeWorkMap(sessions: [live(tone: .idle)]), width: 1000)
-        #expect(layout.nodes.isEmpty && layout.pills.isEmpty && layout.wires.isEmpty)
-        #expect(layout.size.height == OrbitLayout.emptyHeight)
+    @Test func orbitHasNoMinimumBeyondTheHub() {
+        let layout = OrbitLayout(map: HomeWorkMap(sessions: day([2, 1])), width: 1000)
+        #expect(layout.size.height == OrbitLayout.minHeight)
+    }
+
+    @Test func boardBalancesProjectCardsAcrossColumns() {
+        let map = HomeWorkMap(sessions: day([5, 1, 1, 1, 1, 2, 1, 2]))
+        let columns = map.boardColumns(width: 940)
+        #expect(columns.count == 4)
+        #expect(columns.flatMap { $0 }.count == 8)
+        // The busiest project fills its column for a while, so the next ones go elsewhere.
+        #expect(columns[0].count < columns[1].count || columns[0].count < columns[2].count)
+        #expect(map.boardColumns(width: 300).count == 1)
+        #expect(HomeWorkMap(sessions: day([1, 1])).boardColumns(width: 1400).count == 2)
     }
 
     private func request(questions: [AgentQuestion]) -> PermissionRequest {
