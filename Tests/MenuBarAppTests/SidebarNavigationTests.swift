@@ -34,17 +34,17 @@ struct SidebarNavigationTests {
         #expect(!Preferences.collapsedSidebarGroups().contains(.projects))
         try harness.snapshot("expanded-light")
 
-        try harness.click(x: 289, yFromTop: 136)
+        try harness.click(x: 289, yFromTop: 179)
         await harness.settle()
         #expect(harness.store.selection == .session(session.id))
         #expect(Preferences.sidebarExpansion()[project.id] == false)
         try harness.snapshot("collapsed-light")
 
-        try harness.click(x: 289, yFromTop: 136)
+        try harness.click(x: 289, yFromTop: 179)
         await harness.settle()
         #expect(harness.store.selection == .session(session.id))
         #expect(Preferences.sidebarExpansion()[project.id] == true)
-        try harness.click(x: 289, yFromTop: 136)
+        try harness.click(x: 289, yFromTop: 179)
         await harness.settle()
 
         harness.store.append(ChatMessage(role: .assistant, text: "Streaming continues"), to: session.id)
@@ -58,7 +58,7 @@ struct SidebarNavigationTests {
         await harness.settle()
         try harness.snapshot("expanded-dark")
 
-        try harness.click(x: 100, yFromTop: 136)
+        try harness.click(x: 100, yFromTop: 179)
         await harness.settle()
         #expect(harness.store.selection == nil)
         #expect(harness.store.selectedProjectID == project.id)
@@ -220,7 +220,7 @@ struct SidebarNavigationTests {
         #expect(harness.scrollView == nil)
         try harness.snapshot("filtered-out")
 
-        try harness.click(x: 100, yFromTop: 123)
+        try harness.click(x: 100, yFromTop: 172)
         await harness.settle()
         #expect(harness.scrollView != nil)
         #expect(harness.store.selection == .session(session.id))

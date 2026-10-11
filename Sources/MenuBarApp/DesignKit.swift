@@ -935,7 +935,7 @@ private struct SidebarRailMarkerKey: PreferenceKey {
     }
 }
 
-enum RailMetrics {
+private enum RailMetrics {
     static let leading: CGFloat = 20
     static let top: CGFloat = 5
     static let bottom: CGFloat = 4
@@ -976,16 +976,10 @@ extension View {
     // own in a lazy stack. A long rail held in one stack is built whole, off-screen rows
     // and all. Each row draws its own piece of the line, reaching up across the gap the
     // stack leaves above it, and the last piece stops at the last dot.
-    //
-    // `leading` moves the line under the tile of the row the rail hangs from, and `hang`
-    // lets the first piece reach up past the gap to that tile, so the sessions read as
-    // hanging off their project rather than floating beneath it.
     func sidebarRailSegment(colour: Color, isFirst: Bool, isLast: Bool,
-                            stackSpacing: CGFloat,
-                            leading: CGFloat = RailMetrics.leading,
-                            hang: CGFloat = 0) -> some View {
+                            stackSpacing: CGFloat) -> some View {
         let top = (isFirst ? RailMetrics.top : RailMetrics.rowSpacing) - stackSpacing
-        let lineStart = isFirst ? top - hang : -stackSpacing
+        let lineStart = isFirst ? top : -stackSpacing
         return padding(.top, top)
             .padding(.bottom, isLast ? RailMetrics.bottom : 0)
             .background(alignment: .topLeading) {
@@ -998,7 +992,7 @@ extension View {
                     .offset(x: RailMetrics.lineInset)
                     .accessibilityHidden(true)
             }
-            .padding(.leading, leading)
+            .padding(.leading, RailMetrics.leading)
     }
 }
 
@@ -1013,24 +1007,18 @@ struct SidebarRailRow<Content: View>: View {
     // so a pinned row gives up its pin until the turn has been seen.
     var thread: ThreadPhase = .idle
     var threadEndedCleanly = false
-    // Set where the row has no state word of its own, so the node has to carry the state
-    // by its shape: hollow at rest, a green ring while waiting, filled while running, and
-    // amber with a halo when it wants the user. Left out, the node wears the rail's colour.
-    var tone: SessionTone? = nil
     @ViewBuilder let content: Content
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             ZStack {
-                if pinned && thread == .idle && (tone ?? .idle) == .idle {
+                if pinned && thread == .idle {
                     Circle()
                         .fill(Theme.sidebar)
                         .frame(width: 16, height: 16)
                     Image(systemName: "pin.fill")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(Theme.accent)
-                } else if let tone {
-                    toneNode(tone)
                 } else {
                     ThreadNode(phase: thread,
                                endedCleanly: threadEndedCleanly,
@@ -1049,32 +1037,6 @@ struct SidebarRailRow<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    // A turn that ends plays out on the thread node, so a finished or failed turn keeps it.
-    // A question or a stalled wait does not end the turn, and is drawn as its own still
-    // mark until the turn moves again.
-    @ViewBuilder
-    private func toneNode(_ tone: SessionTone) -> some View {
-        switch (tone, thread) {
-        case (.needsYou, .running), (.needsYou, .idle):
-            Circle()
-                .fill(Theme.attention)
-                .frame(width: 9, height: 9)
-                .background(Circle().fill(Theme.sidebar).frame(width: 15, height: 15))
-                .background(Circle().fill(Theme.attention.opacity(0.25)).frame(width: 19, height: 19))
-        case (.waiting, _):
-            Circle()
-                .strokeBorder(Theme.dotOn, lineWidth: 2)
-                .frame(width: 10, height: 10)
-                .background(Circle().fill(Theme.sidebar).frame(width: 14, height: 14))
-        default:
-            ThreadNode(phase: thread,
-                       endedCleanly: threadEndedCleanly,
-                       colour: thread == .finished ? Theme.attention : Theme.dotOn,
-                       restingFill: Color.secondary.opacity(0.75),
-                       hollow: true)
-        }
     }
 }
 
