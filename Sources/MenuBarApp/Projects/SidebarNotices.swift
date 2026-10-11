@@ -98,112 +98,289 @@ extension SessionNotice {
 
 // MARK: - The rail's header
 
-// The app's own row: home, the one number worth carrying at the very top, and the phone
-// badge. The running count is the reason to look at the rail at all, so it sits here
-// rather than being found by opening the project it belongs to.
+// The app's own band: home, the live count, the phone badge, and search. Everything above
+// the tree costs every project a row of height, so the filter folds into this band as a
+// button and only grows across it while it is in use.
 struct SidebarBrandBar: View {
     let runningCount: Int
     let isHome: Bool
     let selectHome: () -> Void
     let noticeMenu: () -> [MenuEntry]
+    @Binding var filter: SidebarFilterBox
+    @FocusState.Binding var filterFocused: Bool
+    // False while a file on screen answers for Command-F. Naming a stroke that lands
+    // somewhere else reads as a broken shortcut rather than as one being shared.
+    let showsShortcutHint: Bool
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
 
+    private static let searchSide: CGFloat = 28
+    // The live count shows a dot per running session up to this many, then lets the
+    // number speak for the rest.
+    private static let liveDots = 5
+
+    private var searching: Bool { filter.showsField }
+
     var body: some View {
-        HStack(spacing: 10) {
-            Button(action: selectHome) {
-                HStack(spacing: 9) {
-                    AppMark()
-                        .frame(width: 26, height: 26)
-                    Text("Teya Code Station")
-                        .font(.logo(18))
-                        .kerning(-0.2)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+        ZStack(alignment: .trailing) {
+            HStack(spacing: 9) {
+                homeButton
+                Spacer(minLength: 4)
+                if runningCount > 0 { liveCount }
+                MobileAccessBadge()
+                Color.clear.frame(width: Self.searchSide, height: 1)
+            }
+            .opacity(searching ? 0 : 1)
+            .allowsHitTesting(!searching)
+            .accessibilityHidden(searching)
+
+            search
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 12)
+        .animation(reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.34),
+                   value: searching)
+        .headerBand(Theme.sidebar)
+        .onChange(of: filterFocused) { _, focused in
+            // A search left empty has nothing to keep the band for.
+            if !focused, filter.text.isEmpty, searching { filter.close() }
+        }
+    }
+
+    private var homeButton: some View {
+        Button(action: selectHome) {
+            HStack(spacing: 9) {
+                AppMark()
+                    .frame(width: 26, height: 26)
+                Text("Teya Code Station")
+                    .font(.logo(17))
+                    .kerning(-0.2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(RoundedRectangle(cornerRadius: 8)
+                .fill(isHome || hovering ? Theme.card : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: 8)
+                .stroke(isHome ? Theme.border : Color.clear, lineWidth: 1.3))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, -6)
+        .onHover { hovering = $0 }
+        .appTooltip("Home")
+        .accessibilityLabel("Home")
+    }
+
+    // One breath for the whole pill rather than one per dot, so the dots stay in step and
+    // the band carries a single loop.
+    private var liveCount: some View {
+        HStack(spacing: 3) {
+            Breathing {
+                HStack(spacing: 3) {
+                    ForEach(0..<min(runningCount, Self.liveDots), id: \.self) { _ in
+                        RunningDot(size: 5)
+                    }
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 8)
-                    .fill(isHome || hovering ? Theme.card : Color.clear))
-                .overlay(RoundedRectangle(cornerRadius: 8)
-                    .stroke(isHome ? Theme.border : Color.clear, lineWidth: 1.3))
-                .contentShape(RoundedRectangle(cornerRadius: 8))
+            }
+            Text(verbatim: "\(runningCount)")
+                .font(.mono(10, .semibold))
+                .foregroundStyle(Theme.dotOnText)
+                .contentTransition(.numericText())
+                .padding(.leading, 4)
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 24)
+        .background(Capsule().fill(Theme.dotOn.opacity(0.12)))
+        .contentShape(Capsule())
+        .appMenu(noticeMenu)
+        .appTooltip("Show active and unread sessions")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(runningCount) running")
+        .accessibilityHint("Shows active and unread sessions")
+    }
+
+    private var search: some View {
+        HStack(spacing: 0) {
+            Button(action: openSearch) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: Self.searchSide, height: Self.searchSide)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .padding(.leading, -6)
-            .onHover { hovering = $0 }
-            .appTooltip("Home")
+            .accessibilityLabel("Search projects and sessions")
+            .appTooltip(showsShortcutHint ? "Search projects and sessions (command-F)"
+                                          : "Search projects and sessions")
 
-            Spacer(minLength: 4)
-
-            if runningCount > 0 {
-                HStack(spacing: 5) {
-                    RunningDot()
-                    Text("\(runningCount)")
-                        .font(.mono(9.5, .semibold))
-                        .kerning(0.7)
-                        .foregroundStyle(Theme.accent)
+            if searching {
+                TextField("Search projects and sessions", text: $filter.text)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                    .focused($filterFocused)
+                    .onExitCommand(perform: closeSearch)
+                    .onChange(of: filter.text) { _, _ in filter.typed() }
+                    .transition(.opacity)
+                Button {
+                    let wasEmpty = filter.text.isEmpty
+                    filter.closeOrClear()
+                    if wasEmpty { filterFocused = false }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 24, height: Self.searchSide)
+                        .contentShape(Rectangle())
                 }
-                .padding(.horizontal, 7)
-                .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.accent.opacity(0.1)))
-                .appMenu(noticeMenu)
-                .appTooltip("Show active and unread sessions")
+                .buttonStyle(.plain)
+                .accessibilityLabel(filter.text.isEmpty ? "Close search" : "Clear search")
+                .appTooltip(filter.text.isEmpty ? "Close search" : "Clear search")
+                .transition(.opacity)
             }
-
-            MobileAccessBadge()
         }
-        .padding(.horizontal, 14)
-        .headerBand(Theme.sidebar)
+        .frame(maxWidth: searching ? .infinity : Self.searchSide, alignment: .leading)
+        .frame(height: Self.searchSide)
+        .surface(searching ? Theme.card : Theme.field, cornerRadius: 8)
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func openSearch() {
+        filter.openField()
+        Task {
+            await Task.yield()
+            filterFocused = true
+        }
+    }
+
+    private func closeSearch() {
+        filter.close()
+        filterFocused = false
     }
 }
 
 // Permission prompts and turns that ended while the user was away are the only things in
 // the app that are waiting on a person, so they sit above the tree rather than being
-// found by opening the project they happen to belong to. Shown only when there is
-// something waiting; the sidebar leaves it out otherwise.
-struct SidebarNeedsYouCard: View {
+// found by opening the project they happen to belong to. They take one row as a stack,
+// with the newest on top, and fan out into a list while the pointer rests on them.
+// Shown only when there is something waiting; the sidebar leaves it out otherwise.
+struct SidebarNeedsYouStack: View {
     let waiting: [NoticedSession]
     let open: (ChatSession) -> Void
 
-    // Three is what fits above the tree without pushing the projects off screen. The
-    // count in the heading is the whole number, so a longer queue still says how long.
-    private static let shown = 3
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var fanned = false
+    @State private var intent: Task<Void, Never>?
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 7) {
-                Circle().fill(Theme.attention).frame(width: 6, height: 6)
-                Text("NEEDS YOU · \(waiting.count)")
-                    .font(.mono(9.5, .semibold))
-                    .kerning(1.1)
-                    .foregroundStyle(Theme.attentionText)
-                Spacer(minLength: 6)
-                Text("⌘⇧A")
-                    .font(.mono(9.5))
-                    .foregroundStyle(.tertiary)
-            }
+    private static let cardHeight: CGFloat = 56
+    private static let pitch: CGFloat = 62
+    // How far each card behind the top one shows below it, and how many show at all.
+    private static let peek: CGFloat = 6
+    private static let behind = 2
+    // The pointer has to settle for this long before the stack opens, so one passing over
+    // on its way to the tree does not shove the tree down and back.
+    private static let hoverIntent: Duration = .milliseconds(140)
 
-            VStack(alignment: .leading, spacing: 7) {
-                ForEach(waiting.prefix(Self.shown), id: \.session.id) { noticed in
-                    row(noticed)
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .background(RoundedRectangle(cornerRadius: 11).fill(Theme.card))
-        .overlay(RoundedRectangle(cornerRadius: 11)
-            .stroke(Theme.attention.opacity(0.45), lineWidth: 1.3))
-        .padding(.horizontal, 14)
-        .padding(.bottom, 12)
+    private var fans: Bool { fanned && waiting.count > 1 }
+
+    private var height: CGFloat {
+        fans ? CGFloat(waiting.count) * Self.pitch - (Self.pitch - Self.cardHeight)
+             : Self.cardHeight + CGFloat(min(waiting.count - 1, Self.behind)) * Self.peek
     }
 
-    private func row(_ noticed: NoticedSession) -> some View {
-        // Answering means the pending prompt; reviewing means the files a finished turn
-        // left behind, so the two land on different tabs of the same session.
-        let answering = noticed.notice == .needsInput
-        return HStack(spacing: 9) {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            heading
+            ZStack(alignment: .top) {
+                ForEach(Array(waiting.enumerated()), id: \.element.session.id) { index, noticed in
+                    card(noticed, at: index)
+                }
+            }
+            .frame(height: height, alignment: .top)
+            .frame(maxWidth: .infinity)
+            .animation(reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.38),
+                       value: height)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .padding(.bottom, 10)
+        .onHover(perform: hover)
+        .onDisappear { intent?.cancel() }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Needs you, \(waiting.count)")
+    }
+
+    private var heading: some View {
+        HStack(spacing: 7) {
+            Circle().fill(Theme.attention).frame(width: 6, height: 6)
+            Text("Needs you")
+                .font(.system(size: 11.5, weight: .bold))
+            Text(verbatim: "\(waiting.count)")
+                .font(.mono(11.5, .bold))
+                .contentTransition(.numericText())
+                .animation(reduceMotion ? nil : Motion.pop, value: waiting.count)
+            Spacer(minLength: 6)
+            Text("⌘⇧A")
+                .font(.mono(9.5))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+        }
+        .foregroundStyle(Theme.attentionText)
+        .padding(.horizontal, 4)
+        .padding(.bottom, 7)
+        .accessibilityElement(children: .combine)
+    }
+
+    // The cards behind the top one step in from the sides rather than shrinking, since a
+    // card holds a button and a scaled button is one AppKit cannot lay out.
+    private func card(_ noticed: NoticedSession, at index: Int) -> some View {
+        let depth = min(index, Self.behind)
+        let shown = fans || index <= Self.behind
+        return NeedsYouStackCard(noticed: noticed, open: open)
+            .padding(.horizontal, fans ? 0 : CGFloat(depth) * 7)
+            .offset(y: fans ? CGFloat(index) * Self.pitch : CGFloat(depth) * Self.peek)
+            .opacity(shown ? (fans ? 1 : 1 - Double(depth) * 0.22) : 0)
+            .zIndex(Double(waiting.count - index))
+            .allowsHitTesting(fans || index == 0)
+            .animation(reduceMotion ? nil : .timingCurve(0.3, 1.25, 0.5, 1, duration: 0.42)
+                .delay(fans ? Double(index) * 0.03 : 0), value: fans)
+            .transition(reduceMotion ? .opacity : .asymmetric(
+                insertion: .offset(y: -16).combined(with: .opacity),
+                removal: .offset(x: 40).combined(with: .opacity)))
+            .animation(reduceMotion ? nil : .timingCurve(0.3, 1.25, 0.5, 1, duration: 0.42),
+                       value: index)
+    }
+
+    private func hover(_ inside: Bool) {
+        intent?.cancel()
+        guard inside else {
+            fanned = false
+            return
+        }
+        intent = Task {
+            try? await Task.sleep(for: Self.hoverIntent)
+            guard !Task.isCancelled else { return }
+            fanned = true
+        }
+    }
+}
+
+private struct NeedsYouStackCard: View {
+    let noticed: NoticedSession
+    let open: (ChatSession) -> Void
+
+    @Environment(ProjectStore.self) private var store
+    @State private var hovering = false
+
+    // Answering means the pending prompt; reviewing means the files a finished turn left
+    // behind, so the two land on different tabs of the same session.
+    private var answering: Bool { noticed.notice == .needsInput }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            tile
             VStack(alignment: .leading, spacing: 2) {
                 Text(noticed.session.title)
                     .font(.system(size: 12.5, weight: .semibold))
@@ -211,18 +388,46 @@ struct SidebarNeedsYouCard: View {
                     .truncationMode(.tail)
                 Text(noticed.reason)
                     .font(.mono(10))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.attentionText)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            ActionButton(title: answering ? "Answer" : "Review",
-                         height: 24, size: 11.5) {
+            ActionButton(title: answering ? "Answer" : "Review", height: 24, size: 11.5) {
                 open(noticed.session)
             }
+            .accessibilityLabel("\(answering ? "Answer" : "Review") \(noticed.session.title)")
         }
-        .contentShape(Rectangle())
+        .padding(.leading, 10)
+        .padding(.trailing, 9)
+        .frame(height: 56)
+        .background(RoundedRectangle(cornerRadius: 11).fill(Theme.card))
+        .overlay(RoundedRectangle(cornerRadius: 11)
+            .strokeBorder(Theme.attention.opacity(hovering ? 0.8 : 0.5),
+                          lineWidth: hovering ? 1.4 : 1.2))
+        .shadow(color: .black.opacity(hovering ? 0.08 : 0.05), radius: hovering ? 6 : 1,
+                y: hovering ? 4 : 1)
+        .contentShape(RoundedRectangle(cornerRadius: 11))
         .onTapGesture { open(noticed.session) }
+        .onHover { hovering = $0 }
+        .motion(Motion.hover, value: hovering)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(noticed.session.title)
+        .accessibilityValue(noticed.reason)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { open(noticed.session) }
+    }
+
+    @ViewBuilder private var tile: some View {
+        if let workspace = noticed.session.workspaceID.flatMap(store.workspace) {
+            SidebarIdentityTile(avatar: workspace.sidebarAvatar, name: workspace.name,
+                                tint: Theme.workspaceTint, stacked: true, side: 22)
+        } else {
+            SidebarIdentityTile(avatar: noticed.project.sidebarAvatar,
+                                name: noticed.project.name,
+                                tint: Theme.projectTint(for: noticed.project.name),
+                                dashed: noticed.project.kind == .adHoc, side: 22)
+        }
     }
 }

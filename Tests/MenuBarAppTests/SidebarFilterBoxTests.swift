@@ -41,6 +41,17 @@ struct SidebarFilterBoxTests {
         #expect(!box.showsField)
     }
 
+    // Escape is the way out of a search, so it never takes a second press.
+    @Test func closingPutsAwayTheTextAndTheFieldTogether() {
+        var box = SidebarFilterBox()
+        box.openField()
+        box.text = "teya"
+
+        box.close()
+        #expect(box.text.isEmpty)
+        #expect(!box.showsField)
+    }
+
     // MARK: - Which clear chases the current row
 
     // A clear by a person is a request to see everything again, so the rail is free to

@@ -146,6 +146,9 @@ struct ThreadNode: View {
     let endedCleanly: Bool
     let colour: Color
     let restingFill: Color
+    // At rest the dot is a ring in the resting colour rather than a filled disc, which is
+    // how an idle session reads where nothing else on the row names its state.
+    var hollow = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -156,11 +159,13 @@ struct ThreadNode: View {
     @State private var bloom: CGFloat = 0
     @State private var pulse: CGFloat = 0
 
-    init(phase: ThreadPhase, endedCleanly: Bool, colour: Color, restingFill: Color) {
+    init(phase: ThreadPhase, endedCleanly: Bool, colour: Color, restingFill: Color,
+         hollow: Bool = false) {
         self.phase = phase
         self.endedCleanly = endedCleanly
         self.colour = colour
         self.restingFill = restingFill
+        self.hollow = hollow
         _look = State(initialValue: .resting(phase))
         _spinning = State(initialValue: phase == .running)
         _shown = State(initialValue: phase)
@@ -185,7 +190,10 @@ struct ThreadNode: View {
                 // than at rest. Over by the time the bloom around it has faded.
                 let pop = stage > 0 ? 0.6 * sin(.pi * min(1, stage * 1.47)) : 0
                 Circle()
-                    .fill(restingFill)
+                    .fill(hollow ? Theme.sidebar : restingFill)
+                    .overlay {
+                        if hollow { Circle().strokeBorder(restingFill, lineWidth: 1.6) }
+                    }
                     .overlay(Circle().fill(colour).opacity(look.lit))
                     .overlay(Circle().fill(Theme.deletion).opacity(look.alarm))
                     .frame(width: 8, height: 8)
