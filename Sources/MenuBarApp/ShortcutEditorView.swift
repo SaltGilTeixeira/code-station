@@ -5,6 +5,7 @@ import SwiftUI
 struct ShortcutEditorRequest: Identifiable {
     let id = UUID()
     var shortcut: Shortcut?
+    var name: String?
     // The project a new shortcut belongs to, and nil for one being saved on the Mac's
     // own list. An edit keeps whatever the shortcut already had.
     var projectID: UUID?
