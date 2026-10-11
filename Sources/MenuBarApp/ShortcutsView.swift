@@ -89,7 +89,8 @@ struct ShortcutsView: View {
                     .foregroundStyle(.secondary)
             }
             .padding(20)
-            ShortcutLibraryList(shortcuts: matches, selectedID: draft?.isNew == false ? draft?.value.id : nil,
+            ShortcutLibraryList(shortcuts: matches, pending: draft?.isNew == true ? draft?.value : nil,
+                                selectedID: draft?.value.id,
                                 isEmptyLibrary: shortcuts.isEmpty,
                                 select: { shortcut in guardChanges { select(shortcut) } },
                                 favorite: { shortcut in
@@ -160,7 +161,7 @@ struct ShortcutsView: View {
     }
 
     private func add() {
-        draft = ShortcutDraft(request: ShortcutEditorRequest())
+        draft = ShortcutDraft(request: ShortcutEditorRequest(name: "New Shortcut"))
         saveStatus = ""
     }
 
@@ -200,6 +201,9 @@ struct ShortcutsView: View {
 struct ShortcutLibraryList: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let shortcuts: [Shortcut]
+    // A new shortcut that is not saved yet. It sits on top so its name can be
+    // seen changing while it is typed.
+    let pending: Shortcut?
     let selectedID: Shortcut.ID?
     let isEmptyLibrary: Bool
     let select: (Shortcut) -> Void
@@ -211,8 +215,10 @@ struct ShortcutLibraryList: View {
     static let rowHeight: CGFloat = 76
     static let rowStride: CGFloat = 80
 
+    private var rows: [Shortcut] { (pending.map { [$0] } ?? []) + shortcuts }
+
     private var below: [Shortcut] {
-        shortcuts.enumerated().filter {
+        rows.enumerated().filter {
             CGFloat($0.offset) * Self.rowStride + Self.rowHeight > visibleRect.maxY + 2
         }.map(\.element)
     }
@@ -222,12 +228,17 @@ struct ShortcutLibraryList: View {
             VStack(spacing: 0) {
                 ScrollView {
                     VStack(spacing: 4) {
-                        if shortcuts.isEmpty {
+                        if rows.isEmpty {
                             PaneMessage(icon: isEmptyLibrary ? "bolt.slash" : "magnifyingglass",
                                         title: isEmptyLibrary ? "No shortcuts saved" : "No shortcuts found",
                                         detail: isEmptyLibrary ? "Add a command to get started."
                                         : "Try another name or clear the search.")
                                 .frame(minHeight: 100)
+                        }
+                        if let pending {
+                            ShortcutLibraryRow(shortcut: pending, selected: pending.id == selectedID,
+                                               select: {}, starFocus: $focusedStar, favorite: nil)
+                                .id(pending.id)
                         }
                         ForEach(shortcuts) { shortcut in
                             ShortcutLibraryRow(shortcut: shortcut, selected: shortcut.id == selectedID,
@@ -255,7 +266,7 @@ struct ShortcutLibraryList: View {
                 }
                 .overlay(alignment: .trailing) {
                     GeometryReader { geometry in
-                        let contentHeight = CGFloat(shortcuts.count) * Self.rowStride + 8
+                        let contentHeight = CGFloat(rows.count) * Self.rowStride + 8
                         if visibleRect.height > 0, contentHeight > visibleRect.height {
                             let trackHeight = max(0, geometry.size.height - 8)
                             let thumbHeight = min(trackHeight, max(20, trackHeight * visibleRect.height / contentHeight))
@@ -292,9 +303,9 @@ struct ShortcutLibraryList: View {
                         }
                         .buttonStyle(.plain)
                     } else {
-                        Label(shortcuts.isEmpty ? "No matching shortcuts"
-                              : visibleRect.minY > 2 ? "End of list · \(shortcuts.count) shortcuts"
-                              : "All \(shortcuts.count) shortcuts visible", systemImage: "checkmark")
+                        Label(rows.isEmpty ? "No matching shortcuts"
+                              : visibleRect.minY > 2 ? "End of list · \(rows.count) shortcuts"
+                              : "All \(rows.count) shortcuts visible", systemImage: "checkmark")
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, minHeight: 34, alignment: .leading)
@@ -312,7 +323,7 @@ struct ShortcutLibraryRow: View {
     let selected: Bool
     let select: () -> Void
     var starFocus: FocusState<Shortcut.ID?>.Binding
-    let favorite: () -> Void
+    let favorite: (() -> Void)?
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -325,7 +336,7 @@ struct ShortcutLibraryRow: View {
                         .background(selected ? Theme.accentFill : Theme.accent.opacity(0.07),
                                     in: RoundedRectangle(cornerRadius: 7))
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(shortcut.name)
+                        Text(shortcut.name.isBlank ? "New Shortcut" : shortcut.name)
                             .font(.system(size: 13, weight: .semibold))
                             .padding(.trailing, 26)
                         Text(shortcut.text.split(whereSeparator: \.isWhitespace).joined(separator: " "))
@@ -346,22 +357,24 @@ struct ShortcutLibraryRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityAddTraits(selected ? .isSelected : [])
-            Button(action: favorite) {
-                Image(systemName: shortcut.favorite ? "star.fill" : "star")
-                    .font(.system(size: 14))
-                    .foregroundStyle(shortcut.favorite ? Theme.secret : Color.secondary)
-                    .frame(width: 32, height: 32)
-                    .contentShape(Rectangle())
+            if let favorite {
+                Button(action: favorite) {
+                    Image(systemName: shortcut.favorite ? "star.fill" : "star")
+                        .font(.system(size: 14))
+                        .foregroundStyle(shortcut.favorite ? Theme.secret : Color.secondary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focused(starFocus, equals: shortcut.id)
+                .overlay(RoundedRectangle(cornerRadius: 7)
+                    .stroke(starFocus.wrappedValue == shortcut.id ? Theme.accent : .clear, lineWidth: 2))
+                .padding(.trailing, 5)
+                .padding(.top, 3)
+                .accessibilityLabel(shortcut.favorite ? "Remove \(shortcut.name) from favorites" : "Add \(shortcut.name) to favorites")
+                .accessibilityValue(shortcut.favorite ? "Favorite" : "Not favorite")
+                .accessibilityAddTraits(shortcut.favorite ? .isSelected : [])
             }
-            .buttonStyle(.plain)
-            .focused(starFocus, equals: shortcut.id)
-            .overlay(RoundedRectangle(cornerRadius: 7)
-                .stroke(starFocus.wrappedValue == shortcut.id ? Theme.accent : .clear, lineWidth: 2))
-            .padding(.trailing, 5)
-            .padding(.top, 3)
-            .accessibilityLabel(shortcut.favorite ? "Remove \(shortcut.name) from favorites" : "Add \(shortcut.name) to favorites")
-            .accessibilityValue(shortcut.favorite ? "Favorite" : "Not favorite")
-            .accessibilityAddTraits(shortcut.favorite ? .isSelected : [])
         }
         .surface(selected ? Theme.accent.opacity(0.07) : Theme.sidebar, cornerRadius: 8,
                  border: selected ? Theme.accent.opacity(0.4) : .clear)

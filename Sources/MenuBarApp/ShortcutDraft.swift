@@ -11,7 +11,7 @@ final class ShortcutDraft {
     let projectName: String?
 
     init(request: ShortcutEditorRequest) {
-        let value = request.shortcut ?? Shortcut(name: "", text: request.text ?? "",
+        let value = request.shortcut ?? Shortcut(name: request.name ?? "", text: request.text ?? "",
                                                 projectID: request.projectID)
         self.value = value
         original = value

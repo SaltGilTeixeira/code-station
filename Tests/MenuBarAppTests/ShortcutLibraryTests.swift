@@ -67,6 +67,16 @@ struct ShortcutLibraryTests {
         #expect(!draft.isDirty)
     }
 
+    @Test func aNamedNewDraftStartsCleanAndWaitsForACommand() {
+        let draft = ShortcutDraft(request: ShortcutEditorRequest(name: "New Shortcut"))
+        #expect(draft.isNew)
+        #expect(draft.value.name == "New Shortcut")
+        #expect(!draft.isDirty)
+        #expect(!draft.canSave)
+        draft.value.text = "make"
+        #expect(draft.canSave)
+    }
+
     @Test func failedSaveKeepsTheLibraryAndDraftIntact() throws {
         let url = scratch.path("shortcuts.json")
         try Data("invalid".utf8).write(to: url)
