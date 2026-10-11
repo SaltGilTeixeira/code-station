@@ -31,6 +31,8 @@ struct DesignView: View {
     @State private var snapshotRequest: DesignSnapshotRequest?
     @State private var preparingHandoff = false
     @State private var waitNoticeDismissed = false
+    // When a prompt last left this composer, so the bubble it becomes can lift into place.
+    @State private var promptSentAt: Date?
     @State private var designWindow = DesignWindow()
 
     var body: some View {
@@ -269,10 +271,20 @@ struct DesignView: View {
                         MessageView(message: message,
                                     projectPath: projectPath,
                                     textScale: textScale,
-                                    availableWidth: width - 28)
+                                    availableWidth: width - 28,
+                                    arriving: message.isArriving(sentAt: promptSentAt))
                             .equatable()
                             .environment(\.runningAgents, runner.runningAgents(sessionID))
                             .environment(\.activeTranscriptTools, runner.runningTools(sessionID))
+                    }
+
+                    if !runner.state(sessionID).isBusy,
+                       let ending = runner.lastTurnEnding(sessionID),
+                       let receipt = TurnReceipt(lastTurnIn: session.messages,
+                                                 projectPath: projectPath) {
+                        TurnSeal(ending: ending, receipt: receipt)
+                            .id(ending.ended)
+                            .transition(.fadeIn)
                     }
 
                     if runner.state(sessionID).isBusy, runner.question(sessionID) == nil {
@@ -423,6 +435,7 @@ struct DesignView: View {
                         onOversizedPaste: attachPastedText,
                         onRecallUp: { runner.recallEarlier(sessionID, store: store) },
                         onRecallDown: { runner.recallLater(sessionID, store: store) },
+                        onSend: { promptSentAt = .now },
                         above: {
                             let queued = runner.queued(sessionID).count
                             if queued > 0 {

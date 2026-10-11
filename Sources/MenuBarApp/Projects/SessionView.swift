@@ -1573,7 +1573,7 @@ struct SessionView: View {
                             },
                             showInExplorer: showInExplorer,
                             promptMenu: promptMenu(for: message),
-                            arriving: isArriving(message))
+                            arriving: message.isArriving(sentAt: promptSentAt))
                     // Every message is on screen now, and a streaming turn rewrites
                     // the last one many times a second. Without this, each of those
                     // redraws every message in the transcript, parsing its markdown
@@ -1667,14 +1667,6 @@ struct SessionView: View {
         .modifier(SentPromptCommands(agent: session.agent,
                                      workingDirectories: store.workingDirectories(for: session),
                                      latestPromptID: session.messages.last(where: { $0.role == .user })?.id))
-    }
-
-    // Only the prompt this composer has just sent. A bubble drawn again later, or one
-    // queued earlier and sent by the runner, is already where it belongs.
-    private func isArriving(_ message: ChatMessage) -> Bool {
-        guard message.role == .user, let promptSentAt else { return false }
-        return message.date >= promptSentAt.addingTimeInterval(-0.5)
-            && Date().timeIntervalSince(promptSentAt) < 1.5
     }
 
     // What to do with what the turn left behind. It sits at the end of the conversation

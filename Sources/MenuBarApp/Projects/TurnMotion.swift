@@ -544,6 +544,15 @@ struct PromptArrival<Outline: Shape>: ViewModifier {
     }
 }
 
+extension ChatMessage {
+    // Whether this is the prompt a composer has just sent. A bubble drawn again later, or
+    // one queued earlier and sent by the runner, is already where it belongs.
+    func isArriving(sentAt: Date?, now: Date = Date()) -> Bool {
+        guard role == .user, let sentAt else { return false }
+        return date >= sentAt.addingTimeInterval(-0.5) && now.timeIntervalSince(sentAt) < 1.5
+    }
+}
+
 // How the last turn ended. Kept by the runner, since a turn's start is not written down
 // anywhere else.
 struct TurnEnding: Equatable, Sendable {

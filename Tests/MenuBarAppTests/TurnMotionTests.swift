@@ -144,6 +144,26 @@ struct TurnMotionTests {
         #expect(receipt.removed == 1 + 1)
     }
 
+    @Test func onlyThePromptJustSentLiftsIntoPlace() {
+        let sent = Self.start.addingTimeInterval(100)
+        var prompt = ChatMessage(role: .user, text: "Add a filter")
+        prompt.date = sent.addingTimeInterval(0.01)
+
+        #expect(prompt.isArriving(sentAt: sent, now: sent.addingTimeInterval(0.2)))
+        // Drawn again once it has landed, it stays where it is.
+        #expect(!prompt.isArriving(sentAt: sent, now: sent.addingTimeInterval(5)))
+        #expect(!prompt.isArriving(sentAt: nil, now: sent))
+
+        // A prompt older than the send was queued earlier and run by the runner.
+        var queued = prompt
+        queued.date = sent.addingTimeInterval(-60)
+        #expect(!queued.isArriving(sentAt: sent, now: sent.addingTimeInterval(0.2)))
+
+        var answer = prompt
+        answer.role = .assistant
+        #expect(!answer.isArriving(sentAt: sent, now: sent.addingTimeInterval(0.2)))
+    }
+
     @Test func aTranscriptWithNoPromptHasNoReceipt() {
         #expect(TurnReceipt(lastTurnIn: [], projectPath: "/repo") == nil)
         #expect(TurnReceipt(lastTurnIn: [ChatMessage(role: .system, text: "note")],
