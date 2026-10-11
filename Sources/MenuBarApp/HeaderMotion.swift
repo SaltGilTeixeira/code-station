@@ -17,7 +17,6 @@ enum HeaderMotion {
     static let rise = Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.42)
     static let slide = Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.4)
     static let sink = Animation.timingCurve(0.4, 0, 0.8, 0.6, duration: 0.24)
-    static let flight = Animation.timingCurve(0.45, 0.05, 0.3, 1, duration: 0.82)
 
     static let pageLift: CGFloat = 8
     // The share of its size a popover starts from. Small enough to read as growing, and
@@ -90,8 +89,8 @@ nonisolated private struct GrowFromPoint: ViewModifier, Animatable {
 }
 
 extension View {
-    // Keeps track of where a button's centre is in the window, for a panel or a flight
-    // that has to start from it.
+    // Keeps track of where a button's centre is in the window, so a panel can grow out of
+    // it and go back into it.
     func onCentreChange(_ action: @escaping (CGPoint) -> Void) -> some View {
         onGeometryChange(for: CGPoint.self) { proxy in
             let frame = proxy.frame(in: .global)
@@ -154,93 +153,5 @@ struct HeaderNote: View {
         .fixedSize()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-    }
-}
-
-// MARK: - Prompt flight
-
-// A saved prompt sent from the rail, shown leaving its button and landing in the
-// composer, so the message that turns up in the chat is seen arriving from the click.
-struct PromptFlight: Identifiable, Equatable {
-    var id = UUID()
-    let name: String
-    let icon: String
-    // Both in window coordinates until the layer drawing the flight moves them into its own.
-    let from: CGPoint
-    let to: CGPoint
-
-    func relative(to origin: CGPoint) -> PromptFlight {
-        PromptFlight(id: id, name: name, icon: icon,
-                     from: CGPoint(x: from.x - origin.x, y: from.y - origin.y),
-                     to: CGPoint(x: to.x - origin.x, y: to.y - origin.y))
-    }
-}
-
-struct PromptFlightChip: View {
-    let flight: PromptFlight
-    let landed: () -> Void
-
-    @State private var progress: CGFloat = 0
-
-    var body: some View {
-        Tweened(progress: progress) { progress in
-            chip
-                .scaleEffect(Self.scale(at: progress))
-                .opacity(Self.opacity(at: progress))
-                .position(point(at: progress))
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-        .onAppear {
-            withAnimation(HeaderMotion.flight) {
-                progress = 1
-            } completion: {
-                landed()
-            }
-        }
-    }
-
-    private var chip: some View {
-        HStack(spacing: 6) {
-            Image(systemName: flight.icon)
-                .font(.system(size: 11, weight: .semibold))
-            Text(flight.name)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-        }
-        .foregroundStyle(.white)
-        .padding(.leading, 9)
-        .padding(.trailing, 12)
-        .frame(height: 28)
-        .background(Theme.accentFill, in: Capsule())
-        .shadow(color: Theme.accentFill.opacity(0.5), radius: 10, y: 6)
-        .fixedSize()
-    }
-
-    // Drops out of the button first, then glides across into the composer, the way
-    // something let go of falls before it travels.
-    private func point(at progress: CGFloat) -> CGPoint {
-        let control = CGPoint(x: flight.from.x, y: flight.from.y + (flight.to.y - flight.from.y) * 0.7)
-        let t = min(1, max(0, progress))
-        let u = 1 - t
-        return CGPoint(x: u * u * flight.from.x + 2 * u * t * control.x + t * t * flight.to.x,
-                       y: u * u * flight.from.y + 2 * u * t * control.y + t * t * flight.to.y)
-    }
-
-    static func scale(at progress: CGFloat) -> CGFloat {
-        switch progress {
-        case ..<0.18: 0.4 + 0.6 * progress / 0.18
-        case ..<0.55: 1 + 0.05 * (progress - 0.18) / 0.37
-        case ..<0.92: 1.05 - 0.2 * (progress - 0.55) / 0.37
-        default: 0.85 - 0.25 * min(1, (progress - 0.92) / 0.08)
-        }
-    }
-
-    static func opacity(at progress: CGFloat) -> CGFloat {
-        switch progress {
-        case ..<0.18: progress / 0.18
-        case ..<0.92: 1
-        default: min(1, max(0, (1 - progress) / 0.08))
-        }
     }
 }

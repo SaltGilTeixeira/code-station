@@ -177,8 +177,8 @@ struct ShortcutsView: View {
 
     private var outputText: String {
         if selected?.kind == .prompt {
-            return "A prompt has no output of its own. Send it from the icon rail above a "
-                + "session and the answer arrives in that conversation."
+            return "A prompt has no output of its own. Send it from the chips beside a "
+                + "session's composer and the answer arrives in that conversation."
         }
         guard let selectedRun else { return "Select a shortcut to see its output." }
         let log = store.log(selectedRun)

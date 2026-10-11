@@ -83,8 +83,8 @@ struct Shortcut: Identifiable, Codable, Equatable, Sendable {
                     Bool.self, forKey: .availableInAllProjects) ?? false)
     }
 
-    // The glyph drawn beside the name wherever this shortcut is offered. A prompt is
-    // offered on a rail of icons with no room for a name, so it always has one. A shared
+    // The glyph drawn beside the name wherever this shortcut is offered. A prompt always
+    // has one, so it reads apart from the commands it shares a row with. A shared
     // command with no icon of its own falls back to the globe, since being offered by
     // every project is the one thing about a shortcut the name alone cannot say.
     var glyph: String? {
@@ -268,9 +268,7 @@ final class ShortcutStore {
         }
     }
 
-    // Narrowed by kind wherever a screen can only offer one of them: a chip strip runs
-    // commands and has nowhere to put a prompt, and the prompt rail is the other way
-    // round.
+    // Narrowed by kind wherever a screen can only offer one of them.
     func shortcuts(for projectID: UUID, kind: ShortcutKind? = nil) -> [Shortcut] {
         shortcuts.filter {
             ($0.projectID == projectID
@@ -441,8 +439,8 @@ final class ShortcutStore {
 
     // MARK: - Running
 
-    // Only a command has anything to run. A prompt is sent by the session rail, which
-    // has the conversation to send it to; nothing here can reach one.
+    // Only a command has anything to run. A prompt is sent by the session's chips, which
+    // have the conversation to send it to; nothing here can reach one.
     func start(_ run: ShortcutRun) {
         guard !state(run).isActive, let shortcut = shortcut(run.shortcutID),
               shortcut.kind == .command else { return }

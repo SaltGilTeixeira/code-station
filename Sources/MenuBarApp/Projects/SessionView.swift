@@ -203,9 +203,6 @@ struct SessionView: View {
     // them and go back into them.
     @State private var findOrigin: CGPoint?
     @State private var recapOrigin: CGPoint?
-    // Where a saved prompt sent from the rail lands, while the composer is on screen.
-    @State private var composerLanding: CGPoint?
-    @State private var promptFlights: [PromptFlight] = []
     @State private var finderNotes = 0
     @State private var finderNoteVisible = false
 
@@ -343,7 +340,6 @@ struct SessionView: View {
                 }
             }
             .background(Theme.background)
-            .overlay { promptFlightLayer }
             .onAppear {
                 composerFocused = true
                 recapOpen = recap != nil
@@ -650,22 +646,13 @@ struct SessionView: View {
         .headerBand(Theme.statusBand, height: Self.destinationDeckHeight)
     }
 
-    // What the pane can open beside where you already are: the panel toggles, the saved
-    // prompts, then what the session itself offers. A hairline closes each group, so the
+    // What the pane can open beside where you already are: the panel toggles, then what
+    // the session itself offers. A hairline closes each group, so the
     // rail reads as a few things rather than as a row of icons.
     private func rail(session: ChatSession, project: Project, recap: SessionRecap?,
                       fit: HeaderFit) -> some View {
         HStack(spacing: 9) {
             panelToggles(session: session, project: project)
-            // An ad-hoc task runs in a private folder made for one prompt, so there is no
-            // project behind it to have saved any.
-            if project.kind == .project, !promptsBlocked(session: session, project: project) {
-                SessionPromptShortcuts(session: session,
-                                       conversationID: visibleConversationID,
-                                       folded: fit == .folded,
-                                       edit: { shortcutEditor = $0 },
-                                       sent: promptSent)
-            }
             if hasUtilities(session: session) {
                 HeaderRailDivider()
                 if fit == .whole {
@@ -1271,34 +1258,6 @@ struct SessionView: View {
 
     // The button both opens and shuts it; opening puts the cursor straight in the shell
     // so it can be used without reaching for the mouse again.
-    // A saved prompt sent from the rail is shown travelling into the composer. Its message
-    // lands in the chat, so a page with no chat on it makes way for the one that has.
-    private func promptSent(_ shortcut: Shortcut, from origin: CGPoint?) {
-        let switching = tab == .troubleshoot || tab == .changes || tab == .explorer
-        if switching { tab = .conversation }
-        guard !reduceMotion, let origin else { return }
-        Task { @MainActor in
-            // The composer has to be on screen, and settled, before there is a place to land.
-            if switching { try? await Task.sleep(for: .milliseconds(300)) }
-            guard let landing = composerLanding else { return }
-            promptFlights.append(PromptFlight(name: shortcut.name,
-                                              icon: shortcut.glyph ?? "sparkles",
-                                              from: origin, to: landing))
-        }
-    }
-
-    private var promptFlightLayer: some View {
-        GeometryReader { proxy in
-            let origin = proxy.frame(in: .global).origin
-            ForEach(promptFlights) { flight in
-                PromptFlightChip(flight: flight.relative(to: origin)) {
-                    promptFlights.removeAll { $0.id == flight.id }
-                }
-            }
-        }
-        .allowsHitTesting(false)
-    }
-
     // Finder opens over the window, so the note is all the window itself shows of the
     // click. A second click keeps the note up rather than letting the first one's timer
     // take it down early.
@@ -2038,13 +1997,6 @@ struct SessionView: View {
                                              sessionID: sessionID,
                                              size: 22)
                         })
-        // Over the text a prompt is typed into, which sits at the bottom of the composer
-        // whatever strips are stacked above it.
-        .onGeometryChange(for: CGPoint.self) { proxy in
-            let frame = proxy.frame(in: .global)
-            return CGPoint(x: frame.midX + frame.width / 4, y: frame.maxY - 36)
-        } action: { composerLanding = $0 }
-        .onDisappear { composerLanding = nil }
     }
 
     // The choices the next turn will run on, on the line the eye is already on when
@@ -2052,7 +2004,7 @@ struct SessionView: View {
     // controls. What the session has done and where belongs on the status strip, not
     // here - this line is only ever about what happens next.
     //
-    // The saved commands sit at the end of it for the same reason. Running the tests for
+    // The saved commands and prompts sit at the end of it for the same reason. Running the tests for
     // what was just written is the next thing that happens as much as sending another
     // prompt is, and docking them here keeps them off a status strip that has to stay one
     // glance wide however many commands a project collects.
@@ -2070,6 +2022,9 @@ struct SessionView: View {
                 // and fit themselves to whatever is left of it once there are more of
                 // them than it can hold.
                 SessionShortcutChips(session: session,
+                                     conversationID: visibleConversationID,
+                                     offersPrompts: !promptsBlocked(session: session,
+                                                                    project: project),
                                      edit: { shortcutEditor = $0 })
                     .frame(maxWidth: .infinity, alignment: .trailing)
             } else {

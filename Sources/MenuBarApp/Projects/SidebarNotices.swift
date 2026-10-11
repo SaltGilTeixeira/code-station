@@ -98,166 +98,63 @@ extension SessionNotice {
 
 // MARK: - The rail's header
 
-// The app's own band: home, the live count, the phone badge, and search. Everything above
-// the tree costs every project a row of height, so the filter folds into this band as a
-// button and only grows across it while it is in use.
+// The app's own row: home, the one number worth carrying at the very top, and the phone
+// badge. The running count is the reason to look at the rail at all, so it sits here
+// rather than being found by opening the project it belongs to.
 struct SidebarBrandBar: View {
     let runningCount: Int
     let isHome: Bool
     let selectHome: () -> Void
     let noticeMenu: () -> [MenuEntry]
-    @Binding var filter: SidebarFilterBox
-    @FocusState.Binding var filterFocused: Bool
-    // False while a file on screen answers for Command-F. Naming a stroke that lands
-    // somewhere else reads as a broken shortcut rather than as one being shared.
-    let showsShortcutHint: Bool
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
 
-    private static let searchSide: CGFloat = 28
-    // The live count shows a dot per running session up to this many, then lets the
-    // number speak for the rest.
-    private static let liveDots = 5
-
-    private var searching: Bool { filter.showsField }
-
     var body: some View {
-        ZStack(alignment: .trailing) {
-            HStack(spacing: 9) {
-                homeButton
-                Spacer(minLength: 4)
-                if runningCount > 0 { liveCount }
-                MobileAccessBadge()
-                Color.clear.frame(width: Self.searchSide, height: 1)
-            }
-            .opacity(searching ? 0 : 1)
-            .allowsHitTesting(!searching)
-            .accessibilityHidden(searching)
-
-            search
-        }
-        .padding(.leading, 14)
-        .padding(.trailing, 12)
-        .animation(reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.34),
-                   value: searching)
-        .headerBand(Theme.sidebar)
-        .onChange(of: filterFocused) { _, focused in
-            // A search left empty has nothing to keep the band for.
-            if !focused, filter.text.isEmpty, searching { filter.close() }
-        }
-    }
-
-    private var homeButton: some View {
-        Button(action: selectHome) {
-            HStack(spacing: 9) {
-                AppMark()
-                    .frame(width: 26, height: 26)
-                Text("Teya Code Station")
-                    .font(.logo(17))
-                    .kerning(-0.2)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 8)
-                .fill(isHome || hovering ? Theme.card : Color.clear))
-            .overlay(RoundedRectangle(cornerRadius: 8)
-                .stroke(isHome ? Theme.border : Color.clear, lineWidth: 1.3))
-            .contentShape(RoundedRectangle(cornerRadius: 8))
-        }
-        .buttonStyle(.plain)
-        .padding(.leading, -6)
-        .onHover { hovering = $0 }
-        .appTooltip("Home")
-        .accessibilityLabel("Home")
-    }
-
-    // One breath for the whole pill rather than one per dot, so the dots stay in step and
-    // the band carries a single loop.
-    private var liveCount: some View {
-        HStack(spacing: 3) {
-            Breathing {
-                HStack(spacing: 3) {
-                    ForEach(0..<min(runningCount, Self.liveDots), id: \.self) { _ in
-                        RunningDot(size: 5)
-                    }
+        HStack(spacing: 10) {
+            Button(action: selectHome) {
+                HStack(spacing: 9) {
+                    AppMark()
+                        .frame(width: 26, height: 26)
+                    Text("Teya Code Station")
+                        .font(.logo(18))
+                        .kerning(-0.2)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
-            }
-            Text(verbatim: "\(runningCount)")
-                .font(.mono(10, .semibold))
-                .foregroundStyle(Theme.dotOnText)
-                .contentTransition(.numericText())
-                .padding(.leading, 4)
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 24)
-        .background(Capsule().fill(Theme.dotOn.opacity(0.12)))
-        .contentShape(Capsule())
-        .appMenu(noticeMenu)
-        .appTooltip("Show active and unread sessions")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(runningCount) running")
-        .accessibilityHint("Shows active and unread sessions")
-    }
-
-    private var search: some View {
-        HStack(spacing: 0) {
-            Button(action: openSearch) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(width: Self.searchSide, height: Self.searchSide)
-                    .contentShape(Rectangle())
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 8)
+                    .fill(isHome || hovering ? Theme.card : Color.clear))
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .stroke(isHome ? Theme.border : Color.clear, lineWidth: 1.3))
+                .contentShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Search projects and sessions")
-            .appTooltip(showsShortcutHint ? "Search projects and sessions (command-F)"
-                                          : "Search projects and sessions")
+            .padding(.leading, -6)
+            .onHover { hovering = $0 }
+            .appTooltip("Home")
 
-            if searching {
-                TextField("Search projects and sessions", text: $filter.text)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12.5))
-                    .focused($filterFocused)
-                    .onExitCommand(perform: closeSearch)
-                    .onChange(of: filter.text) { _, _ in filter.typed() }
-                    .transition(.opacity)
-                Button {
-                    let wasEmpty = filter.text.isEmpty
-                    filter.closeOrClear()
-                    if wasEmpty { filterFocused = false }
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.tertiary)
-                        .frame(width: 24, height: Self.searchSide)
-                        .contentShape(Rectangle())
+            Spacer(minLength: 4)
+
+            if runningCount > 0 {
+                HStack(spacing: 5) {
+                    RunningDot()
+                    Text("\(runningCount)")
+                        .font(.mono(9.5, .semibold))
+                        .kerning(0.7)
+                        .foregroundStyle(Theme.accent)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(filter.text.isEmpty ? "Close search" : "Clear search")
-                .appTooltip(filter.text.isEmpty ? "Close search" : "Clear search")
-                .transition(.opacity)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 4)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Theme.accent.opacity(0.1)))
+                .appMenu(noticeMenu)
+                .appTooltip("Show active and unread sessions")
             }
-        }
-        .frame(maxWidth: searching ? .infinity : Self.searchSide, alignment: .leading)
-        .frame(height: Self.searchSide)
-        .surface(searching ? Theme.card : Theme.field, cornerRadius: 8)
-        .contentShape(RoundedRectangle(cornerRadius: 8))
-    }
 
-    private func openSearch() {
-        filter.openField()
-        Task {
-            await Task.yield()
-            filterFocused = true
+            MobileAccessBadge()
         }
-    }
-
-    private func closeSearch() {
-        filter.close()
-        filterFocused = false
+        .padding(.horizontal, 14)
+        .headerBand(Theme.sidebar)
     }
 }
 
@@ -303,9 +200,9 @@ struct SidebarNeedsYouStack: View {
             .animation(reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.38),
                        value: height)
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 6)
-        .padding(.bottom, 10)
+        .padding(.horizontal, 14)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
         .onHover(perform: hover)
         .onDisappear { intent?.cancel() }
         .accessibilityElement(children: .contain)
