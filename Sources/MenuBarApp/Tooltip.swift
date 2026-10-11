@@ -16,18 +16,28 @@ struct Tooltip {
         let value: String
     }
 
+    // A hint with a layout of its own, hung below its source with a caret pointing up at
+    // it. It is held between the horizontal edges given, so a card asked for by a chart
+    // stays over the chart rather than drifting past it.
+    struct Hanging {
+        let width: CGFloat
+        let edges: ClosedRange<CGFloat>
+        let content: AnyView
+    }
+
     let title: String
     var subtitle: String?
     var note: String?
     var rows: [Row] = []
     var action: (() -> Void)?
     var persistsOnHover = false
+    var hanging: Hanging?
 
     var acceptsHover: Bool { action != nil || persistsOnHover }
 
     // A hint that is only words needs no panel around it, so it is drawn as a plain line
     // instead.
-    var isPlain: Bool { subtitle == nil && note == nil && rows.isEmpty }
+    var isPlain: Bool { subtitle == nil && note == nil && rows.isEmpty && hanging == nil }
 
     // A whole sentence on one line would run off the side of the window, so past a few
     // words it wraps inside a fixed width rather than hugging its text.
@@ -36,7 +46,7 @@ struct Tooltip {
     // Some hints only have something to say part of the time. Asking for an empty one
     // shows nothing rather than a blank card.
     var isEmpty: Bool {
-        title.isEmpty && subtitle == nil && note == nil && rows.isEmpty
+        title.isEmpty && subtitle == nil && note == nil && rows.isEmpty && hanging == nil
     }
 }
 
@@ -85,6 +95,10 @@ final class TooltipPresenter {
             guard !Task.isCancelled else { return }
             hideAll()
         }
+    }
+
+    func isShowing(owner: UUID) -> Bool {
+        self.owner == owner && current != nil
     }
 
     func sourceEntered(owner: UUID) -> Bool {
@@ -247,7 +261,12 @@ struct TooltipHost: View {
     private var size: CGSize { measurement.size }
 
     var body: some View {
-        if let tooltip = presenter.current {
+        if let tooltip = presenter.current, let hanging = tooltip.hanging {
+            HangingCard(hanging: hanging, anchor: presenter.anchor)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .allowsHitTesting(false)
+                .ignoresSafeArea()
+        } else if let tooltip = presenter.current {
             GeometryReader { geometry in
                 card(tooltip)
                     .measuredOverlay(generation: presenter.generation, into: $measurement)
@@ -357,5 +376,80 @@ struct TooltipHost: View {
 
     private func y(in bounds: CGSize) -> CGFloat {
         max(Self.margin, min(presenter.anchor.minY, bounds.height - size.height - Self.margin))
+    }
+}
+
+// MARK: - Hanging card
+
+// Its width is fixed by the source, so it can be placed without waiting to be measured.
+// That is what lets it slide from one source to the next without blinking out for a
+// frame while the new content is laid out.
+private struct HangingCard: View {
+    let hanging: Tooltip.Hanging
+    let anchor: CGRect
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var arrived = false
+
+    private static let gap: CGFloat = 10
+    private static let caretWidth: CGFloat = 14
+    private static let caretHeight: CGFloat = 7
+
+    private var x: CGFloat {
+        let centred = anchor.midX - hanging.width / 2
+        return max(hanging.edges.lowerBound,
+                   min(centred, hanging.edges.upperBound - hanging.width))
+    }
+
+    // The caret keeps pointing at the source while the card is held against an edge,
+    // but never slides into the rounded corner.
+    private var caret: CGFloat {
+        max(16, min(hanging.width - 16, anchor.midX - x))
+    }
+
+    var body: some View {
+        hanging.content
+            .frame(width: hanging.width, alignment: .leading)
+            .floatingCard(cornerRadius: 12)
+            .overlay(alignment: .topLeading) {
+                ZStack {
+                    // Reaches one point into the card to cover its border under the caret.
+                    CaretShape(closed: true)
+                        .fill(Theme.card)
+                        .frame(width: Self.caretWidth, height: Self.caretHeight + 1)
+                        .offset(y: 0.5)
+                    CaretShape(closed: false)
+                        .stroke(Theme.border)
+                        .frame(width: Self.caretWidth, height: Self.caretHeight)
+                }
+                .frame(width: Self.caretWidth, height: Self.caretHeight + 1, alignment: .top)
+                .offset(x: caret - Self.caretWidth / 2, y: -Self.caretHeight)
+            }
+            .scaleEffect(arrived || reduceMotion ? 1 : 0.97, anchor: .top)
+            .offset(x: x, y: anchor.maxY + Self.gap - (arrived || reduceMotion ? 0 : 6))
+            .opacity(arrived ? 1 : 0)
+            .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.86),
+                       value: anchor)
+            .accessibilityHidden(true)
+            .onAppear {
+                withAnimation(reduceMotion ? .easeOut(duration: 0.12) : Motion.reveal) {
+                    arrived = true
+                }
+            }
+    }
+}
+
+// The point of a hanging card. Open, it is only the two sides that meet the card's
+// border; closed, it is the whole triangle to fill.
+private struct CaretShape: Shape {
+    let closed: Bool
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
+        if closed { path.closeSubpath() }
+        return path
     }
 }

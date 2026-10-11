@@ -113,33 +113,53 @@ struct DayRibbon {
     }
 
     struct Activity: Identifiable {
+        // One project's share of a bucket.
+        struct Share: Identifiable {
+            let subject: RibbonSubject
+            let spent: TimeInterval
+
+            var id: String { subject.id }
+        }
+
         let interval: DateInterval
         let spent: TimeInterval
         let sessions: [Block]
+        // Biggest first, so the projects that filled the bucket lead.
+        let projects: [Share]
 
         var id: Date { interval.start }
     }
 
     // Equal time buckets preserve gaps and add parallel sessions instead of letting
     // the last session drawn hide the work underneath it.
-    func activity(bucketCount: Int = 64, subject: String? = nil) -> [Activity] {
+    func activity(bucketCount: Int = 64) -> [Activity] {
         guard bucketCount > 0, axis.duration > 0 else { return [] }
         let step = axis.duration / Double(bucketCount)
-        let matching = blocks.filter { subject == nil || $0.subject.name == subject }
         return (0..<bucketCount).map { index in
             let start = axis.start.addingTimeInterval(Double(index) * step)
             let end = axis.start.addingTimeInterval(Double(index + 1) * step)
             var spent: TimeInterval = 0
             var sessions: [Block] = []
             var seen: Set<UUID> = []
-            for block in matching {
+            var shares: [String: (RibbonSubject, TimeInterval)] = [:]
+            for block in blocks {
                 let overlap = min(end, block.end).timeIntervalSince(max(start, block.start))
                 guard overlap > 0 else { continue }
                 spent += overlap
                 if seen.insert(block.sessionID).inserted { sessions.append(block) }
+                let name = block.subject.name
+                shares[name] = (block.subject, (shares[name]?.1 ?? 0) + overlap)
+            }
+            var projects: [Activity.Share] = shares.values.map {
+                Activity.Share(subject: $0.0, spent: $0.1)
+            }
+            projects.sort { (first: Activity.Share, second: Activity.Share) -> Bool in
+                first.spent == second.spent
+                    ? first.subject.name < second.subject.name
+                    : first.spent > second.spent
             }
             return Activity(interval: DateInterval(start: start, end: end),
-                            spent: spent, sessions: sessions)
+                            spent: spent, sessions: sessions, projects: projects)
         }
     }
 

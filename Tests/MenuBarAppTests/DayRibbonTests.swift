@@ -241,7 +241,9 @@ struct DayRibbonTests {
         #expect(activity[8].spent == 0)
         #expect(activity[11].sessions.isEmpty)
         #expect(activity.reduce(0) { $0 + $1.spent } == ribbon.spent)
-        #expect(ribbon.activity(bucketCount: 24, subject: "First")[9].spent == 1_800)
+        #expect(activity[9].projects.map(\.subject.name) == ["First", "Second"])
+        #expect(activity[9].projects.map(\.spent) == [1_800, 900])
+        #expect(activity[11].projects.isEmpty)
     }
 
     @Test func activityCountsEachSessionOncePerBucketAndClipsAtEdges() {
@@ -259,7 +261,23 @@ struct DayRibbonTests {
         #expect(activity.last?.interval.end == ribbon.now)
         #expect(activity.reduce(0) { $0 + $1.spent } == ribbon.spent)
         #expect(ribbon.activity(bucketCount: 0).isEmpty)
-        #expect(ribbon.activity(subject: "Missing").allSatisfy { $0.spent == 0 })
+    }
+
+    // Two sessions of one project in the same bucket are one row on the hover card.
+    @Test func activityPoolsSessionsOfOneProject() {
+        let first = session(project: "Shared")
+        let second = session(project: "Shared")
+        let other = session(project: "Other")
+        let ribbon = DayRibbon.build([first, second, other], spans: { id in
+            id == other.id
+                ? [TimeSpan(start: at(9, 0), end: at(9, 40))]
+                : [TimeSpan(start: at(9, 0), end: at(9, 30))]
+        }, now: at(24))
+
+        let bucket = ribbon.activity(bucketCount: 24)[9]
+        #expect(bucket.sessions.count == 3)
+        #expect(bucket.projects.map(\.subject.name) == ["Shared", "Other"])
+        #expect(bucket.projects.map(\.spent) == [3_600, 2_400])
     }
 
     @Test func activityIncludesRunningSessionsAndAnEmptyDay() {

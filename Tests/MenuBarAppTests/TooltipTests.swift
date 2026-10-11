@@ -54,6 +54,26 @@ struct TooltipTests {
         presenter.hideAll()
     }
 
+    // A chart hands one card along its bars, so a source has to tell its own card from
+    // one another source put up, and a card with only a layout still counts as a hint.
+    @Test func hangingCardBelongsToTheSourceThatShowedIt() {
+        let presenter = TooltipPresenter()
+        let chart = UUID()
+        let card = Tooltip(title: "", hanging: Tooltip.Hanging(width: 290, edges: 0...600,
+                                                               content: AnyView(Text("Slot"))))
+        #expect(!card.isEmpty)
+        #expect(!card.isPlain)
+        #expect(!card.acceptsHover)
+
+        presenter.show(card, from: CGRect(x: 10, y: 10, width: 4, height: 54), owner: chart)
+        #expect(presenter.isShowing(owner: chart))
+        #expect(!presenter.isShowing(owner: UUID()))
+
+        presenter.hide(owner: chart)
+        #expect(!presenter.isShowing(owner: chart))
+        #expect(presenter.current == nil)
+    }
+
     private func settle(_ view: NSView) async {
         for _ in 0..<4 {
             try? await Task.sleep(for: .milliseconds(20))

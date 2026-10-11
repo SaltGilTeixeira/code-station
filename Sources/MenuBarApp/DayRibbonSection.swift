@@ -1,6 +1,7 @@
 import SwiftUI
 
-// A rolling day of summed session activity, with project totals and session access.
+// A rolling day of summed session activity. Each bar opens the sessions behind it, and
+// resting on one shows which projects filled it.
 struct DayRibbonSection: View {
     let ribbon: DayRibbon
     // Whether every session in the window has been read off disk yet. Without it the
@@ -9,10 +10,26 @@ struct DayRibbonSection: View {
     let scanned: Bool
     let onOpen: (UUID) -> Void
 
-    // Nil shows every project; a selected chip narrows the bars to that project.
-    @State private var focused: String?
+    @Environment(TooltipPresenter.self) private var tooltips
+
+    // One owner for every bar, so moving between bars hands the card along instead of
+    // closing one and waiting to open the next.
+    @State private var cardOwner = UUID()
+    @State private var shownBar: Int?
+    @State private var hoveredBar: Int?
+    @State private var pendingShow: Task<Void, Never>?
+    @State private var pendingHide: Task<Void, Never>?
+    @State private var trackAnchor = FrameAnchor()
+    @State private var sectionAnchor = FrameAnchor()
 
     private static let bandHeight: CGFloat = 54
+    private static let barSpacing: CGFloat = 3
+    private static let cardWidth: CGFloat = 290
+    // Crossing the gap between two bars ends one hover just before the next begins, so
+    // the card waits this long before going, in case the pointer is only passing over.
+    private static let hideGrace = Duration.milliseconds(140)
+
+    private var peeking: Bool { tooltips.isShowing(owner: cardOwner) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -28,11 +45,12 @@ struct DayRibbonSection: View {
                 }
             }
             chart
-            Text("Last 24 hours · Summed session time, including parallel work")
-                .font(.system(size: 10.5)).foregroundStyle(.secondary)
         }
-        .onChange(of: ribbon.legend.map(\.id)) { _, subjects in
-            if let focused, !subjects.contains(focused) { self.focused = nil }
+        .background(FrameAnchorView(anchor: sectionAnchor))
+        .onDisappear {
+            pendingShow?.cancel()
+            pendingHide?.cancel()
+            tooltips.hide(owner: cardOwner, immediately: true)
         }
     }
 
@@ -46,7 +64,7 @@ struct DayRibbonSection: View {
         (Text(scanned ? DayRibbon.duration(ribbon.spent) : "Counting session time…")
             .font(.mono(11.5, .semibold))
             .foregroundStyle(Color.primary)
-            + Text(verbatim: scanned ? " of session time · \(counted(ribbon.legend.count, "project"))" : "")
+            + Text(verbatim: scanned ? " of session time in the last 24 hours" : "")
             .font(.mono(11))
             .foregroundStyle(.tertiary))
             .fixedSize(horizontal: false, vertical: true)
@@ -54,10 +72,8 @@ struct DayRibbonSection: View {
 
     private var chart: some View {
         VStack(alignment: .leading, spacing: 0) {
-            band
-            if scanned && !ribbon.isEmpty {
-                legend
-            } else if scanned {
+            track
+            if scanned && ribbon.isEmpty {
                 emptyNote
             }
         }
@@ -67,28 +83,28 @@ struct DayRibbonSection: View {
 
     // MARK: - Band
 
-    private var band: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            track
-            RibbonAxis(axis: ribbon.axis)
-        }
-    }
-
     private var track: some View {
         GeometryReader { geometry in
             let count = max(1, min(64, Int(geometry.size.width / 7)))
-            let activity = ribbon.activity(bucketCount: count, subject: focused)
+            let activity = ribbon.activity(bucketCount: count)
             let peak = max(activity.map(\.spent).max() ?? 0, 1)
-            HStack(alignment: .bottom, spacing: 3) {
-                ForEach(activity) { bucket in
+            let barWidth = (geometry.size.width - Self.barSpacing * Double(count - 1)) / Double(count)
+            HStack(alignment: .bottom, spacing: Self.barSpacing) {
+                ForEach(Array(activity.enumerated()), id: \.offset) { index, bucket in
                     let fraction = scanned ? bucket.spent / peak : 0
-                    let bar = UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3)
-                        .fill(Theme.accent.opacity(scanned && bucket.spent > 0 ? 0.55 + fraction * 0.3 : 0.22))
-                        .frame(height: max(4, Self.bandHeight * fraction))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                        .contentShape(Rectangle())
-                    if scanned && bucket.spent > 0 {
-                        bar
+                    let height = max(4, Self.bandHeight * fraction)
+                    let live = scanned && bucket.spent > 0
+                    let face = RibbonBar(bucket: bucket,
+                                         height: height,
+                                         opacity: live ? 0.55 + fraction * 0.3 : 0.22,
+                                         dimmed: peeking && shownBar != index,
+                                         stacked: peeking && shownBar == index)
+                    if live {
+                        let place = BarPlace(index: index, bucket: bucket,
+                                             x: Double(index) * (barWidth + Self.barSpacing),
+                                             width: barWidth)
+                        face
+                            .onFocusChange { focused in focus(place, focused) }
                             .appMenu {
                                 [.searchable(bucket.sessions.map { block in
                                     MenuItem(label: block.title, projectTint: block.subject.tint,
@@ -96,14 +112,15 @@ struct DayRibbonSection: View {
                                              handler: { onOpen(block.sessionID) })
                                 }, prompt: "Find a session", noResults: "No sessions match your search.")]
                             }
-                            .appTooltip(activityLabel(bucket))
+                            .onPointerHover { inside in hover(place, inside) }
                             .accessibilityLabel(activityLabel(bucket))
                             .accessibilityHint("Shows sessions active during this time")
                     } else {
-                        bar.accessibilityHidden(true)
+                        face.accessibilityHidden(true)
                     }
                 }
             }
+            .background(FrameAnchorView(anchor: trackAnchor))
         }
         .frame(height: Self.bandHeight)
         .accessibilityElement(children: .contain)
@@ -113,26 +130,12 @@ struct DayRibbonSection: View {
     }
 
     private func activityLabel(_ bucket: DayRibbon.Activity) -> String {
-        let start = bucket.interval.start.formatted(date: .abbreviated, time: .shortened)
+        let start = bucket.interval.start.formatted(date: .omitted, time: .shortened)
         let end = bucket.interval.end.formatted(date: .omitted, time: .shortened)
-        return "\(start) - \(end), \(DayRibbon.duration(bucket.spent)) of session time, "
-            + counted(bucket.sessions.count, "session")
-    }
-
-    // MARK: - Legend
-
-    private var legend: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            Rectangle().fill(Theme.hairline).frame(height: 1)
-            FlowRow(spacing: 6) {
-                ForEach(ribbon.legend) { total in
-                    RibbonChip(total: total,
-                               dimmed: dimmed(total.subject.name),
-                               focus: { focus(total.subject.name) })
-                }
-            }
-        }
-        .padding(.top, 13)
+        let projects = bucket.projects
+            .map { "\($0.subject.name) \(DayRibbon.duration($0.spent))" }
+            .joined(separator: ", ")
+        return "\(start) to \(end), \(DayRibbon.duration(bucket.spent)): \(projects)"
     }
 
     private var emptyNote: some View {
@@ -142,85 +145,212 @@ struct DayRibbonSection: View {
             .padding(.top, 13)
     }
 
-    // MARK: - Focus
+    // MARK: - Card
 
-    private func dimmed(_ name: String) -> Bool {
-        guard let focused else { return false }
-        return focused != name
+    private struct BarPlace {
+        let index: Int
+        let bucket: DayRibbon.Activity
+        let x: CGFloat
+        let width: CGFloat
     }
 
-    private func focus(_ name: String) {
-        focused = focused == name ? nil : name
+    private func hover(_ place: BarPlace, _ inside: Bool) {
+        pendingShow?.cancel()
+        if inside {
+            hoveredBar = place.index
+            pendingHide?.cancel()
+            if peeking {
+                showCard(place)
+                return
+            }
+            pendingShow = Task {
+                try? await Task.sleep(for: TooltipPresenter.hoverDelay)
+                guard !Task.isCancelled else { return }
+                showCard(place)
+            }
+        } else if hoveredBar == place.index {
+            hoveredBar = nil
+            hideCard()
+        }
+    }
+
+    // A keyboard user has no pointer to rest, so focus shows the card straight away.
+    private func focus(_ place: BarPlace, _ focused: Bool) {
+        if focused {
+            pendingShow?.cancel()
+            pendingHide?.cancel()
+            showCard(place)
+        } else if hoveredBar == nil && shownBar == place.index {
+            hideCard()
+        }
+    }
+
+    private func hideCard() {
+        pendingHide?.cancel()
+        pendingHide = Task {
+            try? await Task.sleep(for: Self.hideGrace)
+            guard !Task.isCancelled else { return }
+            tooltips.hide(owner: cardOwner, immediately: true)
+        }
+    }
+
+    private func showCard(_ place: BarPlace) {
+        guard let track = trackAnchor.frame(), let section = sectionAnchor.frame() else { return }
+        let bar = CGRect(x: track.minX + place.x, y: track.minY,
+                         width: place.width, height: track.height)
+        shownBar = place.index
+        tooltips.show(Tooltip(title: "",
+                              hanging: Tooltip.Hanging(
+                                  width: Self.cardWidth,
+                                  edges: section.minX...max(section.maxX, section.minX + Self.cardWidth),
+                                  content: AnyView(RibbonCard(bucket: place.bucket)))),
+                      from: bar, owner: cardOwner)
     }
 }
 
-// MARK: - Legend chip
+// MARK: - Bar
 
-private struct RibbonChip: View {
-    let total: DayRibbon.Total
+private struct RibbonBar: View {
+    let bucket: DayRibbon.Activity
+    let height: CGFloat
+    let opacity: Double
     let dimmed: Bool
-    let focus: () -> Void
-
-    @State private var hovering = false
+    // While its card is up the bar shows its own project mix, biggest at the bottom.
+    let stacked: Bool
 
     var body: some View {
-        Button(action: focus) {
-            HStack(spacing: 7) {
-                ProjectDot(tint: total.subject.tint, size: 8)
-                Text(total.subject.name)
-                    .font(.system(size: 11.5))
-                    .lineLimit(1)
-                Text(DayRibbon.duration(total.spent))
-                    .font(.mono(10.5))
-                    .foregroundStyle(.tertiary)
+        ZStack(alignment: .bottom) {
+            UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3)
+                .fill(Theme.accent.opacity(opacity))
+                .opacity(stacked ? 0 : 1)
+            VStack(spacing: 0) {
+                ForEach(bucket.projects.reversed()) { share in
+                    Rectangle()
+                        .fill(share.subject.tint.colour)
+                        .frame(height: height * share.spent / max(bucket.spent, 1))
+                }
             }
-            .padding(.leading, 8)
-            .padding(.trailing, 10)
-            .padding(.vertical, 6)
-            .surface(hovering ? Theme.field : .clear, cornerRadius: 7)
-            .contentShape(Rectangle())
+            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3))
+            .opacity(stacked ? 1 : 0)
         }
-        .buttonStyle(.plain)
-        .opacity(dimmed ? 0.35 : 1)
-        .hoverLift(hovering)
-        .onHover { hovering = $0 }
-        .motion(Motion.hover, value: hovering)
+        .frame(height: height)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .opacity(dimmed ? 0.3 : 1)
         .motion(Motion.reveal, value: dimmed)
-        .accessibilityLabel("\(total.subject.name), \(DayRibbon.duration(total.spent))")
-        .accessibilityValue(dimmed ? "Not selected" : "Shown")
-        .accessibilityHint("Toggles the project filter for the activity bars")
+        .motion(Motion.reveal, value: stacked)
+        .contentShape(Rectangle())
+    }
+
+    // The bar sits inside the menu button, so it learns of the button's focus from the
+    // environment the button sets.
+    func onFocusChange(_ handler: @escaping (Bool) -> Void) -> some View {
+        FocusReader(handler: handler) { self }
     }
 }
 
-// MARK: - Axis
+private struct FocusReader<Content: View>: View {
+    let handler: (Bool) -> Void
+    @ViewBuilder let content: Content
 
-private struct RibbonAxis: View {
-    let axis: DateInterval
+    @Environment(\.isFocused) private var isFocused
 
     var body: some View {
-        GeometryReader { geometry in
-            let width = geometry.size.width
-            let divisions = width >= 650 ? 6 : 3
-            ZStack(alignment: .topLeading) {
-                Text(axis.start.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                ForEach(1..<divisions, id: \.self) { index in
-                    let position = width * Double(index) / Double(divisions)
-                    let date = axis.start.addingTimeInterval(axis.duration * Double(index) / Double(divisions))
-                    if position > 145 && position < width - 55 {
-                        Text(date.formatted(date: .omitted, time: .shortened))
-                            .frame(width: 72)
-                            .offset(x: position - 36)
-                    }
+        content.onChange(of: isFocused) { _, focused in handler(focused) }
+    }
+}
+
+// What a time slot held: when it was, how long, and the projects that filled it.
+private struct RibbonCard: View {
+    let bucket: DayRibbon.Activity
+
+    private static let maxRows = 5
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: "\(clock(bucket.interval.start)) - \(clock(bucket.interval.end))")
+                        .font(.serif(15))
+                    Text(verbatim: "\(day) · \(counted(bucket.projects.count, "project"))")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
-                Text("Now")
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                Spacer(minLength: 0)
+                Text(DayRibbon.duration(bucket.spent))
+                    .font(.mono(13, .semibold))
+                    .fixedSize()
             }
-            .font(.system(size: 10))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .padding(.top, 11)
+            .padding(.bottom, 10)
+
+            mix
+                .padding(.horizontal, 14)
+
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(bucket.projects.prefix(Self.maxRows)) { share in
+                    HStack(spacing: 9) {
+                        ProjectTileView(name: share.subject.name, tint: share.subject.tint, side: 22)
+                        Text(share.subject.name)
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: 6)
+                        Text(DayRibbon.duration(share.spent))
+                            .font(.mono(10.5))
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                }
+                let rest = bucket.projects.count - Self.maxRows
+                if rest > 0 {
+                    Text(verbatim: "and \(rest) more")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                        .padding(.leading, 39)
+                        .padding(.trailing, 8)
+                        .padding(.top, 2)
+                        .padding(.bottom, 4)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.top, 8)
+            .padding(.bottom, 6)
+
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+            Text("Click to open one of these sessions")
+                .font(.system(size: 10.5))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
+                .padding(.bottom, 9)
         }
-        .frame(height: 15)
-        .accessibilityHidden(true)
+    }
+
+    private var mix: some View {
+        GeometryReader { geometry in
+            let gaps = Double(max(0, bucket.projects.count - 1))
+            let width = max(0, geometry.size.width - gaps)
+            HStack(spacing: 1) {
+                ForEach(bucket.projects) { share in
+                    Rectangle()
+                        .fill(share.subject.tint.colour)
+                        .frame(width: width * share.spent / max(bucket.spent, 1))
+                }
+            }
+        }
+        .frame(height: 6)
+        .background(Theme.field)
+        .clipShape(RoundedRectangle(cornerRadius: 3))
+    }
+
+    private var day: String {
+        Calendar.current.isDateInToday(bucket.interval.start) ? "Today" : "Yesterday"
+    }
+
+    private func clock(_ date: Date) -> String {
+        date.formatted(date: .omitted, time: .shortened)
     }
 }
