@@ -3,9 +3,9 @@ import SwiftUI
 // The settings for the next turn are shared by Chat and Design. Both surfaces use this
 // view so a choice has the same meaning and follows the same app default in either mode.
 //
-// Each control shows its own state rather than only its name: the model as the pill that
-// is picked, the effort as a meter, and how much the agent asks before it acts as a
-// shield coloured by how far it is trusted.
+// Each control shows its own state rather than only its name: the model by name, the
+// effort as a meter, and how much the agent asks before it acts as a shield coloured by
+// how far it is trusted.
 struct SessionRunSettingsControls: View {
     @Environment(ProjectStore.self) private var store
     @Environment(SessionRunner.self) private var runner
@@ -48,52 +48,31 @@ struct SessionRunSettingsControls: View {
 
     // MARK: - Model
 
-    // Every model the agent offers, one click each. A catalog too long for one row, or a
-    // pane too narrow for it, falls back to a menu rather than pushing the rest of the
-    // bar off the edge.
-    @ViewBuilder private func modelControl(_ session: ChatSession, lastRan: String?) -> some View {
+    private func modelControl(_ session: ChatSession, lastRan: String?) -> some View {
         let agent = session.agent
         let model = runner.validModel(sessionSettings.model, for: agent)
-        let options = runner.modelOptions(for: agent)
         let choose = { (id: String?) in chooseModel(id, for: session, lastRan: lastRan) }
-
-        if options.count <= ModelPills.maximumCount {
-            ViewThatFits(in: .horizontal) {
-                ModelPills(options: options, selected: model, choose: choose)
-                    .appTooltip("The model this session will use for its next turn.")
-                modelMenu(agent: agent, model: model, lastRan: lastRan, choose: choose)
-            }
-        } else {
-            modelMenu(agent: agent, model: model, lastRan: lastRan, choose: choose)
-        }
-    }
-
-    private func modelMenu(agent: AgentKind, model: String?, lastRan: String?,
-                           choose: @escaping (String?) -> Void) -> some View {
-        let label = model.map { runner.modelTitle($0) }
+        let title = model.map { runner.modelTitle($0) }
             ?? lastRan.map { ModelChoice.shortName(of: $0) }
-            ?? "Default model"
-        return BarPill {
-            HStack(spacing: 6) {
-                RollingText(label, font: .system(size: 12, weight: .semibold))
-                MenuChevron(size: 8)
-            }
-        }
-        .appMenu(edge: .top) {
-            var entries: [MenuEntry] = [
-                .item("Use \(agent.title) default", checked: model == nil) { choose(nil) },
-                .separator,
-            ]
-            entries += runner.modelOptions(for: agent).compactMap { option in
-                option.id.map { id in
-                    MenuEntry.item(option.title, checked: model == id) { choose(id) }
+            ?? "Default"
+        let help = "The model this session will use for its next turn."
+
+        return ModelPill(title: title)
+            .appMenu(edge: .top) {
+                var entries: [MenuEntry] = [
+                    .item("Use \(agent.title) default", checked: model == nil) { choose(nil) },
+                    .separator,
+                ]
+                entries += runner.modelOptions(for: agent).compactMap { option in
+                    option.id.map { id in
+                        MenuEntry.item(option.title, checked: model == id,
+                                       subtitle: option.detail) { choose(id) }
+                    }
                 }
+                return entries
             }
-            return entries
-        }
-        .appTooltip(model == nil ? "The model this session will use for its next turn."
-                    : "The model this session will use for its next turn. Overridden for this session.")
-        .accessibilityLabel("Model: \(label)")
+            .appTooltip(model == nil ? help : "\(help) Overridden for this session.")
+            .accessibilityLabel("Model: \(title)")
     }
 
     private func chooseModel(_ model: String?, for session: ChatSession, lastRan: String?) {
@@ -271,33 +250,24 @@ struct SessionRunSettingsControls: View {
     }
 }
 
-// MARK: - Model pills
+// MARK: - Model
 
-// The models as a row of pills on one track, with a thumb that slides to the one picked.
-struct ModelPills: View {
-    // More than this and the row stops being a glance, so the bar shows a menu instead.
-    static let maximumCount = 5
-
-    let options: [ModelChoice.Option]
-    let selected: String?
-    let choose: (String?) -> Void
-
-    @Namespace private var thumb
+private struct ModelPill: View {
+    let title: String
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(options) { option in
-                ChoicePill(title: option.title, selected: option.id == selected,
-                           thumb: thumb) { choose(option.id) }
-                    .accessibilityHint(option.detail)
+        BarPill {
+            HStack(spacing: 6) {
+                Image(systemName: "cpu")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                RollingText(title, font: .system(size: 12, weight: .semibold))
+                Text("model")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                MenuChevron(size: 8)
             }
         }
-        .padding(2)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.field))
-        .fixedSize()
-        .motion(Motion.control, value: selected)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Model")
     }
 }
 
