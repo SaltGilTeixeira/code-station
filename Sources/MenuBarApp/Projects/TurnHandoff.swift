@@ -1,27 +1,6 @@
 import AppKit
 import SwiftUI
 
-// The receipt belongs to the turn. Opening review still reads the current repositories,
-// including edits that were already there before this turn started.
-struct TurnHandoff {
-    let receipt: TurnReceipt
-    let failedCommands: [ToolUse]
-
-    init?(messages: [ChatMessage], projectPath: String) {
-        guard let receipt = TurnReceipt(lastTurnIn: messages, projectPath: projectPath),
-              let prompt = messages.lastIndex(where: { $0.role == .user }) else { return nil }
-        self.receipt = receipt
-        failedCommands = messages[(prompt + 1)...]
-            .filter { $0.role == .assistant }
-            .flatMap(\.tools)
-            .filter { $0.name == "Bash" && !$0.isRunning && ($0.isError || ($0.exitCode ?? 0) != 0) }
-    }
-
-    static func warning(_ count: Int) -> String {
-        count == 1 ? "1 command needs a second look" : "\(count) commands need a second look"
-    }
-}
-
 struct TurnHandoffArrival: Equatable {
     private(set) var ending: Date?
 
@@ -38,64 +17,34 @@ struct TurnSeal: View {
     var reviewed = false
     var arriving = false
     var focusReview = false
-    var failedCommands: [ToolUse] = []
-    var projectPath = ""
     var review: (() -> Void)?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(DialogPresenter.self) private var dialogs
     @FocusState private var reviewFocused: Bool
-    @FocusState private var warningFocused: Bool
     @State private var arrival: CGFloat = 1
     @State private var played = false
 
     var body: some View {
         Tweened(progress: arrival) { progress in
             let look = TurnSealArrival(progress: reduceMotion ? 1 : progress)
-            VStack(alignment: .leading, spacing: 7) {
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) {
-                        metadata(look)
-                        reviewButton
-                    }
-                    VStack(alignment: .leading, spacing: 9) {
-                        FlowRow(spacing: 9) { metadata(look) }
-                        if receipt.hasChanges, review != nil {
-                            HStack { Spacer(minLength: 0); reviewButton }
-                        }
-                    }
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    metadata(look)
+                    reviewButton
                 }
-                .padding(.leading, 11)
-                .padding(.trailing, 7)
-                .padding(.vertical, 7)
-                .background(Theme.card, in: RoundedRectangle(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8)
-                    .stroke(tint.opacity(0.3), lineWidth: 1))
-
-                if !failedCommands.isEmpty {
-                    Button(action: showChecks) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "exclamationmark.triangle")
-                            Text(TurnHandoff.warning(failedCommands.count))
-                                .fixedSize(horizontal: false, vertical: true)
-                            Image(systemName: "chevron.right").font(.system(size: 8))
-                        }
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.attentionText)
-                        .frame(minHeight: 16)
-                        .contentShape(Rectangle())
+                VStack(alignment: .leading, spacing: 9) {
+                    FlowRow(spacing: 9) { metadata(look) }
+                    if receipt.hasChanges, review != nil {
+                        HStack { Spacer(minLength: 0); reviewButton }
                     }
-                    .buttonStyle(.plain)
-                    .focusable()
-                    .focused($warningFocused)
-                    .focusEffectDisabled()
-                    .overlay(RoundedRectangle(cornerRadius: 3)
-                        .stroke(warningFocused ? Theme.accent : .clear, lineWidth: 2))
-                    .onKeyPress(keys: [.space, .return]) { _ in showChecks(); return .handled }
-                    .accessibilityLabel("View checks: \(TurnHandoff.warning(failedCommands.count))")
-                    .padding(.leading, 12)
                 }
             }
+            .padding(.leading, 11)
+            .padding(.trailing, 7)
+            .padding(.vertical, 7)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8)
+                .stroke(tint.opacity(0.3), lineWidth: 1))
             .opacity(look.opacity)
             .offset(y: look.offset)
         }
@@ -181,24 +130,6 @@ struct TurnSeal: View {
                 .onKeyPress(keys: [.space, .return]) { _ in review(); return .handled }
                 .accessibilityHint("Opens current repository changes, including edits made before this turn")
         }
-    }
-
-    private func showChecks() {
-        dialogs.show(Dialog(
-            title: "Checks to revisit",
-            message: "These commands reported a failure during this turn. A later successful run may cover a different scope.",
-            content: AnyView(ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(failedCommands) { tool in
-                        Text(ToolPresentationCache.presentation(for: tool, projectPath: projectPath).label)
-                            .font(.mono(11, .semibold))
-                            .textSelection(.enabled)
-                        ToolCallExpandedDetail(tool: tool, projectPath: projectPath, isRunning: false)
-                    }
-                }
-            }.frame(maxHeight: 360)),
-            actions: [.init(label: "Back to conversation", kind: .cancel)],
-            width: 560, isModal: true))
     }
 }
 
