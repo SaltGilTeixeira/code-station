@@ -450,10 +450,104 @@ struct HeaderTabDeck: View {
             ForEach(tabs) { tab in
                 HeaderTabDeckItem(tab: tab, height: height)
                     .id(tab.id)
+                    .anchorPreference(key: HeaderTabFrames.self, value: .bounds) { [tab.id: $0] }
+            }
+        }
+        // Drawn over the row rather than inside a tab, so there is one line that travels
+        // between tabs instead of one line per tab that comes and goes, and choosing a
+        // tab still changes nothing the deck asks for in width.
+        .overlayPreferenceValue(HeaderTabFrames.self) { anchors in
+            GeometryReader { proxy in
+                HeaderTabInk(frames: anchors.mapValues { proxy[$0] },
+                             selected: tabs.first(where: \.selected)?.id)
             }
         }
         .scrollTargetLayout(isEnabled: scrollable)
         .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+private struct HeaderTabFrames: PreferenceKey {
+    static let defaultValue: [HeaderTab.ID: Anchor<CGRect>] = [:]
+
+    static func reduce(value: inout [HeaderTab.ID: Anchor<CGRect>],
+                       nextValue: () -> [HeaderTab.ID: Anchor<CGRect>]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
+// The line under the chosen tab. On a new choice it first stretches to cover both tabs,
+// thickening a little as it goes, and only then lets go of the old one, so the eye is
+// carried from where it was to where it is going rather than asked to find the line again.
+private struct HeaderTabInk: View {
+    let frames: [HeaderTab.ID: CGRect]
+    let selected: HeaderTab.ID?
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var span: ClosedRange<CGFloat>?
+    @State private var thickness: CGFloat = Self.restingThickness
+    @State private var move = 0
+
+    private static let restingThickness: CGFloat = 2
+    private static let stretchedThickness: CGFloat = 3
+    // The line sits a little inside the tab, so neighbouring tabs' lines never touch.
+    private static let inset: CGFloat = 2
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            if let span {
+                RoundedRectangle(cornerRadius: thickness / 2)
+                    .fill(Theme.accent)
+                    .frame(width: span.upperBound - span.lowerBound, height: thickness)
+                    .offset(x: span.lowerBound)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onChange(of: selected, initial: true) { previous, current in
+            travel(from: previous, to: current)
+        }
+        // A tab that changes width - counts arriving, a window resize - takes the line
+        // with it at once. Only a new choice is animated.
+        .onChange(of: target) { _, target in
+            guard let target, thickness == Self.restingThickness else { return }
+            span = target
+        }
+    }
+
+    private var target: ClosedRange<CGFloat>? {
+        selected.flatMap { frames[$0] }.map(Self.span(under:))
+    }
+
+    private static func span(under frame: CGRect) -> ClosedRange<CGFloat> {
+        (frame.minX + inset)...max(frame.minX + inset, frame.maxX - inset)
+    }
+
+    private func travel(from previous: HeaderTab.ID?, to current: HeaderTab.ID?) {
+        move += 1
+        guard let target else {
+            span = nil
+            return
+        }
+        guard !reduceMotion, let previous, previous != current, let start = span,
+              frames[previous] != nil else {
+            span = target
+            return
+        }
+        let reach = min(start.lowerBound, target.lowerBound)...max(start.upperBound, target.upperBound)
+        let thisMove = move
+        withAnimation(HeaderMotion.stretch) {
+            span = reach
+            thickness = Self.stretchedThickness
+        } completion: {
+            // A later click has already sent the line somewhere else.
+            guard thisMove == move else { return }
+            withAnimation(HeaderMotion.release) {
+                span = self.target ?? target
+                thickness = Self.restingThickness
+            }
+        }
     }
 }
 
@@ -462,6 +556,7 @@ private struct HeaderTabDeckItem: View {
     let height: CGFloat
 
     @State private var hovering = false
+    @State private var actOuts = 0
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -478,6 +573,7 @@ private struct HeaderTabDeckItem: View {
             HStack(spacing: 7) {
                 Image(systemName: tab.icon)
                     .font(.system(size: 13, weight: .semibold))
+                    .actOut(tab.icon, trigger: actOuts)
                     .frame(width: 17, height: 17)
                 Text(tab.label)
                     .font(.system(size: Self.wordSize, weight: .semibold))
@@ -502,12 +598,15 @@ private struct HeaderTabDeckItem: View {
             .padding(.horizontal, 11)
             .frame(height: height)
             .overlay(alignment: .bottom) {
-                // Drawn under every tab and inked only under the chosen one, so choosing
-                // moves the line rather than changing what the deck asks for in width.
+                // A faint promise of the line under a tab being pointed at. The line
+                // itself belongs to the deck, which moves it from tab to tab.
                 RoundedRectangle(cornerRadius: 1)
-                    .fill(tab.selected ? Theme.accent : Color.clear)
+                    .fill(Theme.accent.opacity(0.18))
                     .frame(height: 2)
-                    .padding(.horizontal, 2)
+                    .padding(.horizontal, 8)
+                    .scaleEffect(x: showsHint ? 1 : 0.4)
+                    .opacity(showsHint ? 1 : 0)
+                    .accessibilityHidden(true)
             }
             .contentShape(Rectangle())
         }
@@ -515,10 +614,15 @@ private struct HeaderTabDeckItem: View {
         .hoverLift(hovering)
         .onHover { hovering = $0 }
         .motion(Motion.hover, value: hovering)
+        .onChange(of: tab.selected) { _, selected in
+            if selected { actOuts += 1 }
+        }
         .focused($focused)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityAddTraits(tab.selected ? [.isSelected] : [])
     }
+
+    private var showsHint: Bool { hovering && !tab.selected }
 
     // The counts are read out with the destination rather than left as two numbers beside
     // it, so the tab says the same thing whether it is seen or heard.
@@ -609,14 +713,22 @@ struct HeaderRailButton: View {
     // The saved text behind a button whose name is not the whole story - a prompt, where
     // what is about to be sent matters more than what it was called.
     var hint: String? = nil
+    // The colour the glyph fills with while its panel is open, for a glyph whose filled
+    // form says something of its own: a lit bulb for a recap that is out.
+    var openFill: Color? = nil
     var action: (() -> Void)? = nil
 
     @State private var hovering = false
+    @State private var actOuts = 0
 
     var body: some View {
         Group {
             if let action {
-                Button(action: action) { shape }
+                Button {
+                    // The glyph plays its part on the way in, not on the way out.
+                    if state != .open { actOuts += 1 }
+                    action()
+                } label: { shape }
                     .buttonStyle(.plain)
             } else {
                 shape
@@ -631,28 +743,36 @@ struct HeaderRailButton: View {
     }
 
     private var shape: some View {
-        Image(systemName: icon)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(state.tint)
-            .frame(width: 30, height: 34)
-            .background {
-                // The seat stands in for the hover fill rather than sitting under it, so a
-                // button already saying something does not change colour when pointed at.
-                if let seat = state.seat {
-                    RoundedRectangle(cornerRadius: 8).fill(seat)
-                } else if hovering {
-                    RoundedRectangle(cornerRadius: 8).fill(Theme.field)
-                }
+        ZStack {
+            if state == .open, let openFill {
+                Image(systemName: "\(icon).fill")
+                    .foregroundStyle(openFill)
+                    .transition(.opacity)
             }
-            .overlay(alignment: .topTrailing) {
-                if badge {
-                    Circle()
-                        .fill(Theme.attention)
-                        .frame(width: 5, height: 5)
-                        .offset(x: -3, y: 5)
-                        .accessibilityHidden(true)
-                }
+            Image(systemName: icon)
+                .foregroundStyle(state.tint)
+        }
+        .font(.system(size: 13, weight: .semibold))
+        .actOut(icon, trigger: actOuts)
+        .frame(width: 30, height: 34)
+        .background {
+            // The seat stands in for the hover fill rather than sitting under it, so a
+            // button already saying something does not change colour when pointed at.
+            if let seat = state.seat {
+                RoundedRectangle(cornerRadius: 8).fill(seat)
+            } else if hovering {
+                RoundedRectangle(cornerRadius: 8).fill(Theme.field)
             }
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .overlay(alignment: .topTrailing) {
+            if badge {
+                Circle()
+                    .fill(Theme.attention)
+                    .frame(width: 5, height: 5)
+                    .offset(x: -3, y: 5)
+                    .accessibilityHidden(true)
+            }
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 8))
     }
 }

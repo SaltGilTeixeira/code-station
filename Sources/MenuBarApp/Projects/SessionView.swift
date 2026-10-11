@@ -199,6 +199,15 @@ struct SessionView: View {
     // already there the next time this session opens.
     @State private var statsTask: Task<Void, Never>?
     @State private var designHasContent: Bool?
+    // Where the find and recap buttons sit in the window, so their panels grow out of
+    // them and go back into them.
+    @State private var findOrigin: CGPoint?
+    @State private var recapOrigin: CGPoint?
+    // Where a saved prompt sent from the rail lands, while the composer is on screen.
+    @State private var composerLanding: CGPoint?
+    @State private var promptFlights: [PromptFlight] = []
+    @State private var finderNotes = 0
+    @State private var finderNoteVisible = false
 
     private let bottomAnchor = "transcript-bottom"
     private var terminalScope: TerminalScope { .session(sessionID) }
@@ -261,59 +270,64 @@ struct SessionView: View {
                 if store.designHasUpdated(for: session) {
                     designUpdateStrip(session)
                 }
-                switch tab {
-                case .conversation:
-                    if session.isActivelyDesigning {
-                        DesignView(sessionID: session.id)
-                    } else {
-                        conversation(session: session, project: project)
-                    }
-                case .design:
-                    if let design = store.designSession(for: session.id) {
-                        DesignView(sessionID: design.id) { tab = .conversation }
-                    } else if session.sourceDesignSessionID != nil {
-                        DesignReferenceView(sessionID: session.id)
-                    } else {
-                        Color.clear
+                // The group hands the transition to each page, so whichever one is chosen
+                // lifts in under the tab that chose it.
+                Group {
+                    switch tab {
+                    case .conversation:
+                        if session.isActivelyDesigning {
+                            DesignView(sessionID: session.id)
+                        } else {
+                            conversation(session: session, project: project)
+                        }
+                    case .design:
+                        if let design = store.designSession(for: session.id) {
+                            DesignView(sessionID: design.id) { tab = .conversation }
+                        } else if session.sourceDesignSessionID != nil {
+                            DesignReferenceView(sessionID: session.id)
+                        } else {
+                            Color.clear
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .task { openDesign(for: session) }
+                        }
+                    case .troubleshoot:
+                        TroubleshootTabView(sessionID: session.id) { tab = .conversation }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .task { openDesign(for: session) }
-                    }
-                case .troubleshoot:
-                    TroubleshootTabView(sessionID: session.id) { tab = .conversation }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                case .changes:
-                    VStack(spacing: 0) {
-                        WorkspaceChangesView(session: session, initialRoot: requestedChange?.root ?? projectDirectory,
-                                             initialPath: requestedChange?.path,
-                                             selectedRoot: Binding(get: { projectDirectory }, set: { root in
-                                                 selectWorkspaceRoot(root, in: session)
-                                             }), navigation: changesNavigation)
-                        if let reviewingEnding,
-                           reviewingEnding == runner.lastTurnEnding(sessionID)?.ended,
-                           !runner.state(sessionID).isBusy {
-                            TurnReviewFooter(back: returnToHandoff) {
-                                reviewedEnding = reviewingEnding
-                                returnToHandoff()
+                    case .changes:
+                        VStack(spacing: 0) {
+                            WorkspaceChangesView(session: session, initialRoot: requestedChange?.root ?? projectDirectory,
+                                                 initialPath: requestedChange?.path,
+                                                 selectedRoot: Binding(get: { projectDirectory }, set: { root in
+                                                     selectWorkspaceRoot(root, in: session)
+                                                 }), navigation: changesNavigation)
+                            if let reviewingEnding,
+                               reviewingEnding == runner.lastTurnEnding(sessionID)?.ended,
+                               !runner.state(sessionID).isBusy {
+                                TurnReviewFooter(back: returnToHandoff) {
+                                    reviewedEnding = reviewingEnding
+                                    returnToHandoff()
+                                }
                             }
                         }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .onExitCommand {
-                        if reviewingEnding != nil { returnToHandoff() }
-                    }
-                case .explorer:
-                    ExplorerView(root: explorerDirectory, reveal: $explorerReveal,
-                                 repositories: workspaceRepositories(session) + (designFilesURL.map {
-                                     [ChangesRepository(root: $0.path, name: "Design files")]
-                                 } ?? []),
-                                 designFilesRoot: designFilesURL?.path,
-                                 collapsedProjects: $collapsedExplorerProjects,
-                                 selectRoot: { root in
-                                     explorerShowsDesignFiles = root == designFilesURL?.path
-                                     if !explorerShowsDesignFiles { selectWorkspaceRoot(root, in: session) }
-                                 })
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .onExitCommand {
+                            if reviewingEnding != nil { returnToHandoff() }
+                        }
+                    case .explorer:
+                        ExplorerView(root: explorerDirectory, reveal: $explorerReveal,
+                                     repositories: workspaceRepositories(session) + (designFilesURL.map {
+                                         [ChangesRepository(root: $0.path, name: "Design files")]
+                                     } ?? []),
+                                     designFilesRoot: designFilesURL?.path,
+                                     collapsedProjects: $collapsedExplorerProjects,
+                                     selectRoot: { root in
+                                         explorerShowsDesignFiles = root == designFilesURL?.path
+                                         if !explorerShowsDesignFiles { selectWorkspaceRoot(root, in: session) }
+                                     })
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
+                .transition(.headerPage(reduceMotion: reduceMotion))
 
                 if let openRun = shortcuts.output(for: shortcutScope) {
                     ShortcutOutputDrawer(run: openRun) {
@@ -325,9 +339,11 @@ struct SessionView: View {
                     TerminalDrawer(scope: terminalScope,
                                    directory: workingDirectory,
                                    focusTerminal: $terminalFocused)
+                        .transition(.drawer(from: .bottom, reduceMotion: reduceMotion))
                 }
             }
             .background(Theme.background)
+            .overlay { promptFlightLayer }
             .onAppear {
                 composerFocused = true
                 recapOpen = recap != nil
@@ -647,7 +663,8 @@ struct SessionView: View {
                 SessionPromptShortcuts(session: session,
                                        conversationID: visibleConversationID,
                                        folded: fit == .folded,
-                                       edit: { shortcutEditor = $0 })
+                                       edit: { shortcutEditor = $0 },
+                                       sent: promptSent)
             }
             if hasUtilities(session: session) {
                 HeaderRailDivider()
@@ -702,6 +719,7 @@ struct SessionView: View {
                 $findFocused.request()
             }
         }
+        .onCentreChange { findOrigin = $0 }
     }
 
     private var workingSetToggle: some View {
@@ -726,7 +744,18 @@ struct SessionView: View {
             if let worktreePath = session.worktreePath {
                 HeaderRailButton(icon: "folder", label: "Open worktree in Finder") {
                     NSWorkspace.shared.open(URL(fileURLWithPath: worktreePath, isDirectory: true))
+                    showFinderNote()
                 }
+                .overlay(alignment: .topTrailing) {
+                    if finderNoteVisible {
+                        HeaderNote(icon: "arrow.up.forward.app", text: "Opened the worktree in Finder")
+                            .offset(y: Self.destinationDeckHeight + 2)
+                            .transition(reduceMotion
+                                        ? .opacity
+                                        : .opacity.combined(with: .offset(y: -6)))
+                    }
+                }
+                .motion(Motion.reveal, value: finderNoteVisible)
             }
             if showsDesignMaterialExport(session) {
                 designMaterialExportButton(session: session, project: project)
@@ -740,6 +769,7 @@ struct SessionView: View {
                     isOpen: recapOpen,
                     needsAttention: recapNeedsAttention,
                     toggle: toggleRecap)
+                .onCentreChange { recapOrigin = $0 }
             }
             if appSettings.mobileAccessEnabled {
                 MobileAccessButton(scope: .session(sessionID), onRail: true)
@@ -754,6 +784,8 @@ struct SessionView: View {
         HeaderRailButton(icon: "ellipsis",
                          badge: recapNeedsAttention,
                          label: "More session actions")
+            // The recap's own button is folded in here, so its card grows from this one.
+            .onCentreChange { recapOrigin = $0 }
             .appMenu { utilityEntries(session: session, project: project) }
     }
 
@@ -815,7 +847,7 @@ struct SessionView: View {
                 close: closeRecap)
                 .padding(.trailing, 20)
                 .offset(y: Self.destinationDeckHeight + 7)
-                .transition(.fadeIn)
+                .transition(.grow(from: recapOrigin, reduceMotion: reduceMotion))
         }
     }
 
@@ -1239,6 +1271,47 @@ struct SessionView: View {
 
     // The button both opens and shuts it; opening puts the cursor straight in the shell
     // so it can be used without reaching for the mouse again.
+    // A saved prompt sent from the rail is shown travelling into the composer. Its message
+    // lands in the chat, so a page with no chat on it makes way for the one that has.
+    private func promptSent(_ shortcut: Shortcut, from origin: CGPoint?) {
+        let switching = tab == .troubleshoot || tab == .changes || tab == .explorer
+        if switching { tab = .conversation }
+        guard !reduceMotion, let origin else { return }
+        Task { @MainActor in
+            // The composer has to be on screen, and settled, before there is a place to land.
+            if switching { try? await Task.sleep(for: .milliseconds(300)) }
+            guard let landing = composerLanding else { return }
+            promptFlights.append(PromptFlight(name: shortcut.name,
+                                              icon: shortcut.glyph ?? "sparkles",
+                                              from: origin, to: landing))
+        }
+    }
+
+    private var promptFlightLayer: some View {
+        GeometryReader { proxy in
+            let origin = proxy.frame(in: .global).origin
+            ForEach(promptFlights) { flight in
+                PromptFlightChip(flight: flight.relative(to: origin)) {
+                    promptFlights.removeAll { $0.id == flight.id }
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    // Finder opens over the window, so the note is all the window itself shows of the
+    // click. A second click keeps the note up rather than letting the first one's timer
+    // take it down early.
+    private func showFinderNote() {
+        finderNotes += 1
+        let note = finderNotes
+        finderNoteVisible = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.9))
+            if finderNotes == note { finderNoteVisible = false }
+        }
+    }
+
     private func toggleTerminal(directory: String) {
         let opening = !terminals.isOpen(terminalScope)
         terminals.setOpen(opening, for: terminalScope, directory: directory)
@@ -1371,12 +1444,10 @@ struct SessionView: View {
                             .shadow(color: isDocked ? .clear : .black.opacity(0.16),
                                     radius: isDocked ? 0 : 18,
                                     x: isDocked ? 0 : -5)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                            .transition(.drawer(from: .trailing, reduceMotion: reduceMotion))
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.18),
-                           value: workingSetVisible)
             }
         }
     }
@@ -1392,6 +1463,7 @@ struct SessionView: View {
                         focused: $findFocused,
                         move: { transcriptFind.move(by: $0) },
                         close: closeFind)
+                    .transition(.grow(from: findOrigin, reduceMotion: reduceMotion))
             }
             transcript(session)
             Divider().overlay(Theme.hairline)
@@ -1966,6 +2038,13 @@ struct SessionView: View {
                                              sessionID: sessionID,
                                              size: 22)
                         })
+        // Over the text a prompt is typed into, which sits at the bottom of the composer
+        // whatever strips are stacked above it.
+        .onGeometryChange(for: CGPoint.self) { proxy in
+            let frame = proxy.frame(in: .global)
+            return CGPoint(x: frame.midX + frame.width / 4, y: frame.maxY - 36)
+        } action: { composerLanding = $0 }
+        .onDisappear { composerLanding = nil }
     }
 
     // The choices the next turn will run on, on the line the eye is already on when

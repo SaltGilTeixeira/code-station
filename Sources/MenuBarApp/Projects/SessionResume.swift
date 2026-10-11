@@ -67,6 +67,7 @@ struct SessionRecapControl: View {
             state: isGeneratingInitialRecap ? .working : (isOpen ? .open : .rest),
             badge: needsAttention,
             label: tooltip,
+            openFill: Theme.brand,
             action: isGeneratingInitialRecap ? nil : toggle)
             // An existing recap can still be closed while its replacement is running.
             .disabled(recap == nil && !regenerating && !canRegenerate)

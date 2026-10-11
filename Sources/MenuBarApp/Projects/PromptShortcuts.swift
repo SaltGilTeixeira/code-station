@@ -19,6 +19,13 @@ struct SessionPromptShortcuts: View {
     // Whether the rail has room to stand each prompt on a button of its own.
     let folded: Bool
     let edit: (ShortcutEditorRequest) -> Void
+    // Told which prompt went and the centre of the button it left from, in window
+    // coordinates, so the pane can show it travelling to the composer.
+    var sent: (Shortcut, CGPoint?) -> Void = { _, _ in }
+
+    // Where each button sits, keyed by prompt, plus the one that folds them all.
+    @State private var origins: [UUID: CGPoint] = [:]
+    @State private var foldedOrigin: CGPoint?
 
     // Past a few, a row of glyphs stops being something you read and starts being
     // something you search, and the rail has the tab deck to share its width with.
@@ -49,6 +56,7 @@ struct SessionPromptShortcuts: View {
                                 hint: shortcut.text) {
             send(shortcut)
         }
+        .onCentreChange { origins[shortcut.id] = $0 }
         .appContextMenu { menu(for: placement) }
     }
 
@@ -56,6 +64,7 @@ struct SessionPromptShortcuts: View {
     // or a project that has collected more than a glance can hold.
     private func collapsed(_ placements: [ShortcutPlacement]) -> some View {
         HeaderRailButton(icon: "sparkles", label: "Send a saved prompt")
+            .onCentreChange { foldedOrigin = $0 }
             .appMenu {
                 var entries: [MenuEntry] = placements.map { placement in
                     let shortcut = placement.shortcut
@@ -109,5 +118,6 @@ struct SessionPromptShortcuts: View {
 
     private func send(_ shortcut: Shortcut) {
         runner.send(shortcut.text, sessionID: conversationID, store: store)
+        sent(shortcut, origins[shortcut.id] ?? foldedOrigin)
     }
 }
