@@ -282,7 +282,7 @@ struct DesignView: View {
                        let ending = runner.lastTurnEnding(sessionID),
                        let receipt = TurnReceipt(lastTurnIn: session.messages,
                                                  projectPath: projectPath) {
-                        TurnSeal(ending: ending, receipt: receipt)
+                        TurnSeal(ending: ending, receipt: receipt, arriving: ending.isFresh())
                             .id(ending.ended)
                             .transition(.fadeIn)
                     }

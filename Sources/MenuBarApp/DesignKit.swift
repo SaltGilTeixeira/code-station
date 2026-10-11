@@ -1005,6 +1005,7 @@ struct ActionButton: View {
     var height: CGFloat = 32
     var size: CGFloat = 12.5
     var icon: String? = nil
+    var trailingIcon: String? = nil
     // The key that does the same thing, drawn as a cap on the button that names it. Only
     // worth carrying where the key is the faster answer and the button is how it is learnt.
     var shortcut: String? = nil
@@ -1048,6 +1049,10 @@ struct ActionButton: View {
                 // A button's label is the button: it holds its width and lets whatever
                 // shares the row give way, rather than truncating its own words.
                 .fixedSize()
+            if let trailingIcon {
+                Image(systemName: trailingIcon)
+                    .font(.system(size: size - 1, weight: .semibold))
+            }
             if let shortcut {
                 Text(shortcut)
                     .font(.system(size: size - 1.5, weight: .semibold))

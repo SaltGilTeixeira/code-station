@@ -168,6 +168,11 @@ struct SessionView: View {
     @State private var transcriptScrollRequest = 0
     // When a prompt last left this composer, so the bubble it becomes can lift into place.
     @State private var promptSentAt: Date?
+    @State private var handoffArrival = TurnHandoffArrival()
+    @State private var arrivingEnding: Date?
+    @State private var reviewingEnding: Date?
+    @State private var reviewedEnding: Date?
+    @State private var focusHandoffReview = false
     @State private var agentFocus: AgentTranscriptFocus?
     @State private var recapOpen = false
     @State private var recapNeedsAttention = false
@@ -277,12 +282,25 @@ struct SessionView: View {
                     TroubleshootTabView(sessionID: session.id) { tab = .conversation }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case .changes:
-                    WorkspaceChangesView(session: session, initialRoot: requestedChange?.root ?? projectDirectory,
-                                         initialPath: requestedChange?.path,
-                                         selectedRoot: Binding(get: { projectDirectory }, set: { root in
-                                             selectWorkspaceRoot(root, in: session)
-                                         }), navigation: changesNavigation)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    VStack(spacing: 0) {
+                        WorkspaceChangesView(session: session, initialRoot: requestedChange?.root ?? projectDirectory,
+                                             initialPath: requestedChange?.path,
+                                             selectedRoot: Binding(get: { projectDirectory }, set: { root in
+                                                 selectWorkspaceRoot(root, in: session)
+                                             }), navigation: changesNavigation)
+                        if let reviewingEnding,
+                           reviewingEnding == runner.lastTurnEnding(sessionID)?.ended,
+                           !runner.state(sessionID).isBusy {
+                            TurnReviewFooter(back: returnToHandoff) {
+                                reviewedEnding = reviewingEnding
+                                returnToHandoff()
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onExitCommand {
+                        if reviewingEnding != nil { returnToHandoff() }
+                    }
                 case .explorer:
                     ExplorerView(root: explorerDirectory, reveal: $explorerReveal,
                                  repositories: workspaceRepositories(session) + (designFilesURL.map {
@@ -370,6 +388,10 @@ struct SessionView: View {
             .onChange(of: tab, initial: true) {
                 store.noteSessionTab(openedDestination, for: sessionID)
                 if tab != .changes { requestedChange = nil }
+                if tab != .conversation {
+                    arrivingEnding = nil
+                    focusHandoffReview = false
+                }
             }
             .task(id: sessionID) {
                 selectedProjectID = requestedChange.flatMap { change in
@@ -412,6 +434,11 @@ struct SessionView: View {
             }
             .onChange(of: runner.state(sessionID)) { _, state in
                 openWorkingSetForLiveTurnIfNeeded()
+                if state.isBusy {
+                    reviewingEnding = nil
+                    focusHandoffReview = false
+                    arrivingEnding = nil
+                }
                 if !state.isBusy {
                     // The runner checks the same folders before it launches and refuses the
                     // turn if one is gone, so the end of a turn is where that failure turns
@@ -1470,6 +1497,22 @@ struct SessionView: View {
             // at its end instead of appearing and then jumping there.
             .opacity(opened ? 1 : 0)
             .accessibilityHidden(!opened)
+            .onAppear {
+                _ = handoffArrival.observe(runner.lastTurnEnding(sessionID), visible: false)
+            }
+            .onDisappear { arrivingEnding = nil }
+            .onChange(of: runner.lastTurnEnding(sessionID)) { _, ending in
+                guard handoffArrival.observe(ending, visible: opened && transcriptPinnedToBottom),
+                      let ending, !runner.state(sessionID).isBusy,
+                      let handoff = TurnHandoff(messages: session.messages, projectPath: projectPath)
+                else { return }
+                arrivingEnding = ending.ended
+                let warning = handoff.failedCommands.isEmpty ? ""
+                    : ". " + TurnHandoff.warning(handoff.failedCommands.count)
+                NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                    userInfo: [.announcement: handoff.receipt.spokenSummary(ending) + warning,
+                               .priority: NSAccessibilityPriorityLevel.medium.rawValue])
+            }
             .task(id: sessionID) {
                 if agentFocus == nil {
                     transcriptWindow.reset()
@@ -1586,13 +1629,23 @@ struct SessionView: View {
             }
 
             if !state.isBusy, let ending = runner.lastTurnEnding(sessionID),
-               let receipt = TurnReceipt(lastTurnIn: session.messages, projectPath: projectPath) {
-                TurnSeal(ending: ending, receipt: receipt)
+               let handoff = TurnHandoff(messages: session.messages, projectPath: projectPath) {
+                TurnSeal(ending: ending, receipt: handoff.receipt,
+                         reviewed: reviewedEnding == ending.ended,
+                         arriving: arrivingEnding == ending.ended,
+                         focusReview: focusHandoffReview,
+                         failedCommands: handoff.failedCommands, projectPath: projectPath,
+                         review: runner.question(sessionID) == nil ? {
+                             reviewingEnding = ending.ended
+                             focusHandoffReview = false
+                             changesNavigation.showingHistory = false
+                             openChanges()
+                         } : nil)
                     .id(ending.ended)
-                    .transition(.fadeIn)
+                    .transition(.identity)
+            } else if runner.lastTurnEnding(sessionID) == nil {
+                handoff(state: state)
             }
-
-            handoff(state: state)
 
             pendingQuestion(projectPath: projectPath)
                 .transition(.fadeIn)
@@ -1680,13 +1733,18 @@ struct SessionView: View {
         } ?? false
         if hasChanges, !state.isBusy, runner.question(sessionID) == nil {
             HStack(spacing: 8) {
-                ActionButton(title: "Click here to review changes") {
+                ActionButton(title: "Review changes") {
                     openChanges()
                 }
                 Spacer(minLength: 0)
             }
             .transition(.fadeIn)
         }
+    }
+
+    private func returnToHandoff() {
+        focusHandoffReview = true
+        tab = .conversation
     }
 
     private func openChanges() {

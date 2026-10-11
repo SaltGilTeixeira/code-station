@@ -572,7 +572,7 @@ struct TurnEnding: Equatable, Sendable {
     // A seal meeting an ending this recent is seeing it happen, so it stamps itself in.
     // Anything older is being read back and is simply there.
     func isFresh(now: Date = Date()) -> Bool {
-        now.timeIntervalSince(ended) < 2
+        (0..<2).contains(now.timeIntervalSince(ended))
     }
 }
 
@@ -649,98 +649,5 @@ struct TurnReceipt: Equatable {
         let headline = ending.outcome == .finished ? "Finished in \(length)" : "Stopped after \(length)"
         guard hasChanges else { return headline }
         return "\(headline). \(added) lines added, \(removed) removed, in \(filePhrase)."
-    }
-}
-
-// The receipt stamped under a turn: how long it took and what it changed. A failure wears
-// the warning colours; the card under it carries the way forward.
-struct TurnSeal: View {
-    let ending: TurnEnding
-    let receipt: TurnReceipt
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var stamp: CGFloat
-
-    init(ending: TurnEnding, receipt: TurnReceipt) {
-        self.ending = ending
-        self.receipt = receipt
-        _stamp = State(initialValue: ending.isFresh() ? 0 : 1)
-    }
-
-    var body: some View {
-        Tweened(progress: stamp) { progress in
-            label
-                .modifier(SealStamp(progress: progress, outcome: ending.outcome,
-                                    moves: !reduceMotion))
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(receipt.spokenSummary(ending))
-        .onAppear {
-            guard stamp < 1 else { return }
-            // Lands on the answer's last beat: a clean finish stamps once the answer is
-            // in, a stop or failure slides in at once since the card below says more.
-            let animation: Animation = switch ending.outcome {
-            case .finished: .timingCurve(0.2, 0.9, 0.3, 1, duration: 0.38).delay(0.7)
-            case .stopped, .failed: .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.22).delay(0.26)
-            }
-            withAnimation(reduceMotion ? .easeOut(duration: 0.2) : animation) { stamp = 1 }
-        }
-    }
-
-    private var failed: Bool { ending.outcome == .failed }
-
-    private var label: some View {
-        HStack(spacing: 8) {
-            if ending.outcome == .finished {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(Theme.dotOn)
-            }
-            Text(TurnReceipt.headline(ending))
-            if receipt.hasChanges {
-                Text("·")
-                HStack(spacing: 5) {
-                    Text("+\(receipt.added)")
-                        .foregroundStyle(failed ? Theme.warningText : Theme.addition)
-                    Text("\u{2212}\(receipt.removed)")
-                        .foregroundStyle(failed ? Theme.warningText : Theme.deletion)
-                }
-                Text("·")
-                Text(receipt.filePhrase)
-            }
-        }
-        .font(.mono(11, .semibold))
-        .monospacedDigit()
-        .foregroundStyle(failed ? AnyShapeStyle(Theme.warningText) : AnyShapeStyle(.secondary))
-        .lineLimit(1)
-        .padding(.horizontal, 11)
-        .frame(height: 26)
-        .background(Capsule().fill(failed ? Theme.warningBackground : Theme.card))
-        .overlay(Capsule().stroke(failed ? Color.clear : Theme.border))
-        .shadow(color: .black.opacity(failed ? 0 : 0.1), radius: 6, y: 4)
-    }
-}
-
-private struct SealStamp: ViewModifier {
-    let progress: CGFloat
-    let outcome: TurnEnding.Outcome
-    let moves: Bool
-
-    func body(content: Content) -> some View {
-        switch outcome {
-        case .finished:
-            // Pressed down from a little above the page, a hair past flat, then settled.
-            let landing = min(1, progress / 0.6)
-            let settle = max(0, (progress - 0.6) / 0.4)
-            let scale = progress < 0.6 ? 1.4 - 0.44 * landing : 0.96 + 0.04 * settle
-            content
-                .scaleEffect(moves ? scale : 1, anchor: .center)
-                .rotationEffect(.degrees(moves ? -5 * (1 - landing) : 0))
-                .opacity(landing)
-        case .stopped, .failed:
-            content
-                .offset(y: moves ? -6 * (1 - progress) : 0)
-                .opacity(progress)
-        }
     }
 }
