@@ -9,8 +9,20 @@ struct ShortcutsView: View {
     @State private var query = ""
     @State private var saveStatus = ""
 
-    private var shortcuts: [Shortcut] { store.macShortcuts }
-    private var matches: [Shortcut] { store.libraryShortcuts(query: query) }
+    // The list and the header show the open draft's pick before it is saved, so they
+    // never disagree with the editor beside them. Cancel puts the saved value back.
+    private var shortcuts: [Shortcut] { Self.previewing(draft?.value, in: store.macShortcuts) }
+    private var matches: [Shortcut] { Self.previewing(draft?.value, in: store.libraryShortcuts(query: query)) }
+
+    static func previewing(_ draft: Shortcut?, in shortcuts: [Shortcut]) -> [Shortcut] {
+        guard let draft else { return shortcuts }
+        return shortcuts.map { shortcut in
+            guard shortcut.id == draft.id else { return shortcut }
+            var previewed = shortcut
+            previewed.availableInAllProjects = draft.availableInAllProjects
+            return previewed
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,7 +56,7 @@ struct ShortcutsView: View {
                 Text("Shortcuts").font(.serif(32, .semibold))
                     .lineLimit(1)
                     .fixedSize()
-                Text("\(shortcuts.count) saved on this Mac · \(shortcuts.count(where: \.availableInAllProjects)) available in all projects")
+                Text("\(shortcuts.count) saved on this Mac · \(shortcuts.count(where: \.availableInAllProjects)) in all projects")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -113,7 +125,8 @@ struct ShortcutsView: View {
                     ShortcutEditorForm(draft: draft, locked: store.isRunningAnywhere(draft.value.id),
                                        showsCommandOutput: true) {
                         ShortcutCommandOutput(shortcut: store.shortcut(draft.value.id),
-                                              canRun: !draft.isDirty && !draft.isNew)
+                                              canRun: !draft.isDirty && !draft.isNew,
+                                              availableInAllProjects: draft.value.availableInAllProjects)
                     }
                     .padding(.horizontal, 32)
                     .padding(.vertical, 25)
@@ -342,8 +355,8 @@ struct ShortcutLibraryRow: View {
                         Text(shortcut.text.split(whereSeparator: \.isWhitespace).joined(separator: " "))
                             .font(.mono(10.5))
                             .foregroundStyle(.secondary)
-                        Label(shortcut.availableInAllProjects ? "All projects" : "This Mac",
-                              systemImage: shortcut.availableInAllProjects ? "globe" : "desktopcomputer")
+                        Label(shortcut.availableInAllProjects ? "All projects" : "Shortcuts window",
+                              systemImage: shortcut.availableInAllProjects ? "globe" : "macwindow")
                             .foregroundStyle(.secondary)
                             .font(.system(size: 10))
                     }
@@ -385,6 +398,14 @@ private struct ShortcutCommandOutput: View {
     @Environment(ShortcutStore.self) private var store
     let shortcut: Shortcut?
     let canRun: Bool
+    let availableInAllProjects: Bool
+
+    private var runLine: String {
+        guard canRun else { return "Save your changes before running this command." }
+        return availableInAllProjects
+            ? "Runs with zsh from ~ here, or from the project folder that runs it."
+            : "Runs with zsh from ~ on this Mac."
+    }
 
     private var run: ShortcutRun? {
         shortcut.map { ShortcutRun($0.id, in: $0.directory(projectPath: nil)) }
@@ -414,7 +435,7 @@ private struct ShortcutCommandOutput: View {
     var body: some View {
         VStack(spacing: 14) {
             HStack {
-                Text(canRun ? "Runs with zsh from ~ on this Mac." : "Save your changes before running this command.")
+                Text(runLine)
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                 Spacer()
                 ActionButton(title: active ? "Stop command" : "Run command",

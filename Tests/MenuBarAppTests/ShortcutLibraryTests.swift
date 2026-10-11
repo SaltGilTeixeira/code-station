@@ -67,6 +67,27 @@ struct ShortcutLibraryTests {
         #expect(!draft.isDirty)
     }
 
+    @Test func theListPreviewsTheDraftsScopeBeforeItIsSaved() {
+        let qwen = Shortcut(name: "Qwen", text: "ollama run qwen")
+        let maven = Shortcut(name: "Maven", text: "./mvnw verify", availableInAllProjects: true)
+        var draft = qwen
+        draft.name = "Renamed"
+        draft.availableInAllProjects = true
+        let previewed = ShortcutsView.previewing(draft, in: [qwen, maven])
+        #expect(previewed.map(\.availableInAllProjects) == [true, true])
+        #expect(previewed[0].name == "Qwen")
+        #expect(ShortcutsView.previewing(nil, in: [qwen, maven]) == [qwen, maven])
+    }
+
+    @Test func theScopePickerNamesTheNarrowChoiceAfterItsProject() {
+        #expect(ShortcutScopePicker.narrowTitle(projectName: nil) == "Shortcuts window only")
+        #expect(ShortcutScopePicker.narrowTitle(projectName: "Billing") == "Billing only")
+        #expect(ShortcutScopePicker.help(availableInAllProjects: false, projectName: nil)
+                == "Only listed here. Projects and sessions do not show it.")
+        #expect(ShortcutScopePicker.help(availableInAllProjects: true, projectName: "Billing")
+                .hasPrefix("Shows in every project"))
+    }
+
     @Test func aNamedNewDraftStartsCleanAndWaitsForACommand() {
         let draft = ShortcutDraft(request: ShortcutEditorRequest(name: "New Shortcut"))
         #expect(draft.isNew)
