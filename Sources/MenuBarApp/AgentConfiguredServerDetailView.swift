@@ -464,9 +464,7 @@ struct AgentStatusDot: View {
             case .cantConnect: Circle().fill(Theme.deletion)
             case .off: Circle().fill(Theme.dotOff)
             case .working:
-                Breathing { phase in
-                    Circle().fill(Theme.dotOff).opacity(1 - 0.65 * phase)
-                }
+                BreathingCircle(colour: Theme.dotOff, fullOpacity: 0.35)
             }
         }
         .frame(width: size, height: size)

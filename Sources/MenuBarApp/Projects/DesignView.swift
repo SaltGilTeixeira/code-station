@@ -221,9 +221,8 @@ struct DesignView: View {
             conversationMinimized = false
         } label: {
             HStack(spacing: 10) {
-                Breathing(active: tone == .running) { phase in
+                Breathing(active: tone == .running) {
                     AgentAvatarView(image: bot.displayImage(for: sessionID), size: 30)
-                        .opacity(1 - 0.45 * phase)
                 }
                 .overlay(Circle().stroke(tone == .idle ? Color.clear : tone.colour, lineWidth: 1.5)
                     .padding(-3))

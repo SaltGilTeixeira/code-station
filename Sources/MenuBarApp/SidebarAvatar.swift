@@ -222,14 +222,12 @@ private struct TilePinBadge: View {
     }
 }
 
-// Artwork that cannot animate itself says a session is working by breathing instead. The
-// phase comes off the clock for the reason `Breath` gives: a tile in a rail that scrolls
-// would otherwise carry the repeating swing into its own position.
+// Artwork that cannot animate itself says a session is working by breathing instead.
 private struct StillArtworkActiveMotion: ViewModifier {
     let active: Bool
 
     func body(content: Content) -> some View {
-        Breathing(active: active) { phase in content.opacity(1 - 0.45 * phase) }
+        Breathing(active: active) { content }
     }
 }
 

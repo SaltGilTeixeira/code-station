@@ -271,47 +271,116 @@ struct OrbitMap: View {
 
 // The lines from the hub to each project and on to its sessions. A line flows while what
 // it leads to is running, and stands still otherwise, so motion on the map always means
-// work is happening.
+// work is happening. The flow is played by Core Animation, so a map full of running work
+// costs nothing between frames.
 private struct OrbitWires: View {
     let wires: [OrbitLayout.Wire]
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let dash: CGFloat = 8
-    private static let flowPeriod: TimeInterval = 0.48
-
     var body: some View {
-        let flowing = !reduceMotion && wires.contains { $0.kind == .running }
-        TimelineView(.animation(paused: !flowing)) { context in
-            let turn = context.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: Self.flowPeriod) / Self.flowPeriod
-            let phase = flowing ? -Self.dash * turn : 0
-            ZStack {
-                ForEach(wires) { wire in
-                    MapConnector(start: wire.start, end: wire.end)
-                        .stroke(colour(wire), style: style(wire, phase: phase))
-                }
+        let flowing = reduceMotion ? [] : wires.filter { $0.kind == .running }
+        ZStack {
+            ForEach(wires.filter { reduceMotion || $0.kind != .running }) { wire in
+                MapConnector(start: wire.start, end: wire.end)
+                    .stroke(Self.colour(wire.kind), style: Self.style(wire))
+            }
+            if !flowing.isEmpty {
+                FlowingWires(wires: flowing, colour: Self.colour(.running))
             }
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 
-    private func colour(_ wire: OrbitLayout.Wire) -> Color {
-        switch wire.kind {
+    static func colour(_ kind: OrbitLayout.Wire.Kind) -> Color {
+        switch kind {
         case .attention: Theme.attention.opacity(0.7)
         case .running: Theme.accent.opacity(0.4)
         case .quiet: Theme.accent.opacity(0.22)
         }
     }
 
-    private func style(_ wire: OrbitLayout.Wire, phase: CGFloat) -> StrokeStyle {
-        let width: CGFloat = wire.trunk ? 1.6 : 1.2
+    static func width(_ wire: OrbitLayout.Wire) -> CGFloat { wire.trunk ? 1.6 : 1.2 }
+
+    static func style(_ wire: OrbitLayout.Wire) -> StrokeStyle {
+        let width = width(wire)
         return switch wire.kind {
         case .attention: StrokeStyle(lineWidth: width)
-        case .running: StrokeStyle(lineWidth: width, lineCap: .round, dash: [2, 6], dashPhase: phase)
+        case .running: StrokeStyle(lineWidth: width, lineCap: .round, dash: FlowingWiresView.dash)
         case .quiet: StrokeStyle(lineWidth: width, dash: [2, 4])
         }
+    }
+}
+
+private struct FlowingWires: NSViewRepresentable {
+    let wires: [OrbitLayout.Wire]
+    let colour: Color
+
+    func makeNSView(context: Context) -> FlowingWiresView { FlowingWiresView() }
+
+    func updateNSView(_ view: FlowingWiresView, context: Context) {
+        let paths = Dictionary(grouping: wires, by: OrbitWires.width).mapValues { group in
+            let path = CGMutablePath()
+            for wire in group {
+                path.addPath(MapConnector(start: wire.start, end: wire.end).path(in: .zero).cgPath)
+            }
+            return path as CGPath
+        }
+        view.update(paths: paths, colour: colour.resolve(in: context.environment).cgColor)
+    }
+}
+
+final class FlowingWiresView: LoopLayerView {
+    static let dash: [CGFloat] = [2, 6]
+    private static let flowPeriod: TimeInterval = 0.48
+
+    // One layer for each line width, since a layer strokes every line it holds the same.
+    private var lines: [CGFloat: CAShapeLayer] = [:]
+
+    func update(paths: [CGFloat: CGPath], colour: CGColor) {
+        LayerLoop.still {
+            for (width, line) in lines where paths[width] == nil {
+                line.removeFromSuperlayer()
+                lines[width] = nil
+            }
+            for (width, path) in paths {
+                let line = lines[width] ?? addLine(width: width)
+                line.path = path
+                line.strokeColor = colour
+            }
+        }
+    }
+
+    override func layoutLayers() {
+        lines.values.forEach { $0.frame = bounds }
+    }
+
+    override func restartLoops() {
+        lines.values.forEach(flow)
+    }
+
+    private func addLine(width: CGFloat) -> CAShapeLayer {
+        let line = CAShapeLayer()
+        line.fillColor = nil
+        line.lineWidth = width
+        line.lineCap = .round
+        line.lineDashPattern = Self.dash.map { NSNumber(value: Double($0)) }
+        line.frame = bounds
+        line.contentsScale = window?.backingScaleFactor ?? 2
+        layer?.addSublayer(line)
+        lines[width] = line
+        flow(line)
+        return line
+    }
+
+    // The dashes travel one whole pattern each period, out from the hub.
+    private func flow(_ line: CAShapeLayer) {
+        let flow = CABasicAnimation(keyPath: "lineDashPhase")
+        flow.fromValue = 0
+        flow.toValue = -Self.dash.reduce(0, +)
+        flow.duration = Self.flowPeriod
+        line.add(LayerLoop.repeating(flow, period: Self.flowPeriod), forKey: "flow")
     }
 }
 

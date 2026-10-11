@@ -6,7 +6,7 @@ import Testing
 // The sidebar says a session's state with a band across the top of its card, and says a
 // row is pinned with a mark on its tile or its rail. These hold what the marks have to
 // keep true: each live state has a band that differs from the others without its colour,
-// the words on a band stay readable, the stripes drift by whole periods, and the pin on
+// the words on a band stay readable, the drifting stripes never leave a gap, and the pin on
 // the rail takes no room from the card beside it.
 @MainActor
 struct SidebarStateMarksTests {
@@ -29,18 +29,18 @@ struct SidebarStateMarksTests {
         #expect(waiting.stripe == nil && !waiting.drifts)
     }
 
-    @Test func theStripesMoveOneWholePeriodAndStartOver() {
-        let start = Date(timeIntervalSinceReferenceDate: 0)
-        let period = Stripes.driftPeriod
+    // The drift slides the stripes one whole period to the right and starts over, so the
+    // path has to reach a period further left than the band, or a gap would open at the
+    // left edge just before each restart.
+    @Test func theStripesCoverTheBandWhereverTheDriftHasGot() {
+        let size = CGSize(width: 120, height: 18)
+        let period = Stripes.period
+        let still = Stripes.path(in: size, period: period).boundingRect
+        let drifting = Stripes.path(in: size, period: period, lead: period).boundingRect
 
-        #expect(Stripes.offset(at: start) == 0)
-        #expect(abs(Stripes.offset(at: start.addingTimeInterval(period / 2))
-            - Stripes.period / 2) < 0.001)
-
-        for step in 0..<100 {
-            let offset = Stripes.offset(at: start.addingTimeInterval(period * 3 * Double(step) / 100))
-            #expect(offset >= 0 && offset < Stripes.period, "offset left its range at step \(step)")
-        }
+        #expect(still.minX <= 0 && still.maxX >= size.width)
+        #expect(drifting.minX + period <= 0)
+        #expect(drifting.maxX >= size.width)
     }
 
     // The word is drawn on the darkest part of its band: a stripe, over the band, over an

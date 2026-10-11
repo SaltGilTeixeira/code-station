@@ -28,19 +28,12 @@ enum TurnMotion {
     static let dropHeight: CGFloat = 34
     static let climbHeight: CGFloat = 56
 
-    static func orbit(at date: Date) -> Angle {
-        let turn = date.timeIntervalSinceReferenceDate
-            .truncatingRemainder(dividingBy: orbitPeriod) / orbitPeriod
-        return .degrees(360 * turn)
-    }
-
-    // The share of the ring the arc covers. It swells and shrinks once a period, so the
-    // orbit reads as something working rather than a spinner.
-    static func arcLength(at date: Date) -> CGFloat {
-        let phase = date.timeIntervalSinceReferenceDate
-            .truncatingRemainder(dividingBy: arcPeriod) / arcPeriod
-        return 0.22 + 0.26 * (0.5 - 0.5 * cos(2 * .pi * phase))
-    }
+    // The share of the ring the arc covers. It swells and shrinks once an arc period, so
+    // the orbit reads as something working rather than a spinner. Under Reduce Motion it
+    // stands still at its resting length.
+    static let arcShortest: CGFloat = 0.22
+    static let arcLongest: CGFloat = 0.48
+    static let arcResting: CGFloat = 0.3
 
     // An effect that can play again is driven by a counter: each run adds one, and the
     // effect reads only the part of the current run covered so far. A fresh run then
@@ -220,22 +213,13 @@ struct ThreadNode: View {
     }
 
     private var orbit: some View {
-        TimelineView(.animation(paused: reduceMotion)) { context in
-            let length = reduceMotion ? 0.3 : TurnMotion.arcLength(at: context.date)
-            let angle = reduceMotion ? Angle.zero : TurnMotion.orbit(at: context.date)
-            ZStack {
-                Circle()
-                    .stroke(colour.opacity(0.22), lineWidth: 1.6)
-                Tweened(progress: look.closed) { closed in
-                    Circle()
-                        .trim(from: 0, to: length + (1 - length) * closed)
-                        .stroke(colour, style: StrokeStyle(lineWidth: 1.7, lineCap: .round))
-                        .rotationEffect(angle - .degrees(90))
-                }
-            }
-            .frame(width: 14, height: 14)
-            .opacity(look.ring)
+        ZStack {
+            Circle()
+                .stroke(colour.opacity(0.22), lineWidth: 1.6)
+            OrbitArc(colour: colour, moving: !reduceMotion, closed: look.closed > 0)
         }
+        .frame(width: 14, height: 14)
+        .opacity(look.ring)
     }
 
     private func play(from old: ThreadPhase, to new: ThreadPhase) {
@@ -320,6 +304,100 @@ struct ThreadNode: View {
             guard shown != .running else { return }
             spinning = false
         }
+    }
+}
+
+// The arc that circles a running dot, played by Core Animation: it turns once every orbit
+// period and swells and shrinks once every arc period. Closing sweeps it round into a
+// whole ring.
+private struct OrbitArc: NSViewRepresentable {
+    let colour: Color
+    let moving: Bool
+    let closed: Bool
+
+    func makeNSView(context: Context) -> OrbitArcView { OrbitArcView() }
+
+    func updateNSView(_ view: OrbitArcView, context: Context) {
+        view.update(colour: colour.resolve(in: context.environment).cgColor,
+                    moving: moving, closed: closed)
+    }
+}
+
+final class OrbitArcView: LoopLayerView {
+    private let turner = CALayer()
+    private let arc = CAShapeLayer()
+    private(set) var moving = false
+    private(set) var closed = false
+
+    // The arc starts at the top of the ring rather than on its right.
+    private static let top = CATransform3DMakeRotation(-.pi / 2, 0, 0, 1)
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        arc.fillColor = nil
+        arc.lineWidth = 1.7
+        arc.lineCap = .round
+        arc.strokeEnd = TurnMotion.arcResting
+        turner.transform = Self.top
+        turner.addSublayer(arc)
+        layer?.addSublayer(turner)
+    }
+
+    var arcEnd: CGFloat { arc.strokeEnd }
+    var loops: [String] { (arc.animationKeys() ?? []) + (turner.animationKeys() ?? []) }
+
+    func update(colour: CGColor, moving: Bool, closed: Bool) {
+        LayerLoop.still { arc.strokeColor = colour }
+        guard moving != self.moving || closed != self.closed else { return }
+        let closing = closed && !self.closed
+        self.moving = moving
+        self.closed = closed
+        if closing && moving {
+            close()
+        } else {
+            restartLoops()
+        }
+    }
+
+    override func layoutLayers() {
+        turner.bounds = bounds
+        turner.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        arc.frame = bounds
+        arc.path = CGPath(ellipseIn: bounds, transform: nil)
+    }
+
+    override func restartLoops() {
+        LayerLoop.still {
+            arc.strokeEnd = closed ? 1 : TurnMotion.arcResting
+        }
+        arc.removeAnimation(forKey: "swell")
+        arc.removeAnimation(forKey: "close")
+        turner.removeAnimation(forKey: "turn")
+        guard moving else { return }
+
+        let turn = CABasicAnimation(keyPath: "transform.rotation.z")
+        turn.fromValue = -CGFloat.pi / 2
+        turn.toValue = CGFloat.pi * 3 / 2
+        turn.duration = TurnMotion.orbitPeriod
+        turner.add(LayerLoop.repeating(turn, period: TurnMotion.orbitPeriod), forKey: "turn")
+
+        guard !closed else { return }
+        let swell = LayerLoop.swing("strokeEnd", from: TurnMotion.arcShortest,
+                                    to: TurnMotion.arcLongest, period: TurnMotion.arcPeriod)
+        arc.add(LayerLoop.repeating(swell, period: TurnMotion.arcPeriod), forKey: "swell")
+    }
+
+    // Sweeps from wherever the swell has got to, so the arc never jumps before it closes.
+    private func close() {
+        let from = arc.presentation()?.strokeEnd ?? arc.strokeEnd
+        arc.removeAnimation(forKey: "swell")
+        LayerLoop.still { arc.strokeEnd = 1 }
+        let sweep = CABasicAnimation(keyPath: "strokeEnd")
+        sweep.fromValue = from
+        sweep.toValue = 1
+        sweep.duration = 0.36
+        sweep.timingFunction = CAMediaTimingFunction(controlPoints: 0.65, 0, 0.35, 1)
+        arc.add(sweep, forKey: "close")
     }
 }
 

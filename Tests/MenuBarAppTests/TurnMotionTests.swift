@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 import Testing
@@ -45,22 +46,35 @@ struct TurnMotionTests {
         #expect(TurnMotion.arcPeriod >= 1.2)
     }
 
-    @Test func theOrbitComesBackToWhereItStartedEachPeriod() {
-        let moment = Self.start.addingTimeInterval(0.3)
-        let later = moment.addingTimeInterval(TurnMotion.orbitPeriod * 3)
-        let drift = (TurnMotion.orbit(at: later) - TurnMotion.orbit(at: moment)).degrees
-        #expect(abs(drift.remainder(dividingBy: 360)) < 0.01)
-        #expect(TurnMotion.orbit(at: Self.start).degrees.isNear(0))
-        let half = Self.start.addingTimeInterval(TurnMotion.orbitPeriod / 2)
-        #expect(TurnMotion.orbit(at: half).degrees.isNear(180))
+    @Test func theArcNeitherVanishesNorClosesWhileRunning() {
+        #expect(TurnMotion.arcShortest > 0)
+        #expect(TurnMotion.arcLongest < 1)
+        #expect(TurnMotion.arcShortest < TurnMotion.arcLongest)
+        #expect((TurnMotion.arcShortest...TurnMotion.arcLongest).contains(TurnMotion.arcResting))
     }
 
-    @Test func theArcNeitherVanishesNorClosesWhileRunning() {
-        for step in 0...100 {
-            let date = Self.start.addingTimeInterval(TurnMotion.arcPeriod * Double(step) / 50)
-            let length = TurnMotion.arcLength(at: date)
-            #expect(length >= 0.22 - 0.000_1 && length <= 0.48 + 0.000_1)
-        }
+    @Test func aRunningArcTurnsAndSwells() {
+        let arc = OrbitArcView(frame: NSRect(x: 0, y: 0, width: 14, height: 14))
+        arc.update(colour: .black, moving: true, closed: false)
+        #expect(Set(arc.loops) == ["turn", "swell"])
+
+        arc.update(colour: .black, moving: false, closed: false)
+        #expect(arc.loops.isEmpty)
+        #expect(arc.arcEnd == TurnMotion.arcResting)
+    }
+
+    // Closing keeps the turn going while the arc sweeps round, and leaves a whole ring.
+    @Test func closingSweepsTheArcIntoAWholeRing() {
+        let arc = OrbitArcView(frame: NSRect(x: 0, y: 0, width: 14, height: 14))
+        arc.update(colour: .black, moving: true, closed: false)
+        arc.update(colour: .black, moving: true, closed: true)
+        #expect(Set(arc.loops) == ["turn", "close"])
+        #expect(arc.arcEnd == 1)
+
+        // A new turn before the orbit has gone opens the arc again.
+        arc.update(colour: .black, moving: true, closed: false)
+        #expect(Set(arc.loops) == ["turn", "swell"])
+        #expect(arc.arcEnd == TurnMotion.arcResting)
     }
 
     @Test func theBeadWaitsAtTheTopThenLandsInTheNode() {
