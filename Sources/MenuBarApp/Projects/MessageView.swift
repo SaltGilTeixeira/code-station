@@ -18,6 +18,9 @@ struct MessageView: View, Equatable {
     var promptMenu: (() -> [MenuEntry])?
     // Whether this is the prompt the composer has just sent, which lifts into place.
     var arriving = false
+    var bubble = UserMessageStyle.leaf
+
+    @Environment(\.colorScheme) private var colorScheme
 
     // What the message is made of, and nothing else. The callbacks are left out on
     // purpose: each is a fresh closure on every redraw, so comparing them would say
@@ -27,7 +30,7 @@ struct MessageView: View, Equatable {
     nonisolated static func == (a: MessageView, b: MessageView) -> Bool {
         a.message == b.message && a.projectPath == b.projectPath
             && a.textScale == b.textScale && a.availableWidth == b.availableWidth
-            && a.arriving == b.arriving
+            && a.arriving == b.arriving && a.bubble == b.bubble
     }
 
     var body: some View {
@@ -84,6 +87,7 @@ struct MessageView: View, Equatable {
                     SentPromptText(text: message.text)
                 }
             }
+            .environment(\.colorScheme, bubble.inverts ? colorScheme.inverted : colorScheme)
             .padding(.leading, 15)
             .padding(.trailing, message.text.isEmpty ? 15 : 42)
             .padding(.vertical, 11)
@@ -91,11 +95,12 @@ struct MessageView: View, Equatable {
             // the side of the page it came from.
             .background(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12,
                                                bottomTrailingRadius: 4, topTrailingRadius: 12)
-                .fill(Theme.userMessage))
+                .fill(bubble.fill))
             .overlay(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12,
                                             bottomTrailingRadius: 4, topTrailingRadius: 12)
-                .stroke(Theme.userMessageRing))
+                .stroke(bubble.ring))
             .modifier(PromptArrival(active: arriving,
+                                    ringColour: bubble.inverts ? bubble.fill : bubble.ring,
                                     outline: UnevenRoundedRectangle(
                                         topLeadingRadius: 12, bottomLeadingRadius: 12,
                                         bottomTrailingRadius: 4, topTrailingRadius: 12)))
@@ -456,4 +461,8 @@ struct Fence {
     func isClosed(by fence: Fence) -> Bool {
         fence.marker.first == marker.first && fence.marker.count >= marker.count && fence.info.isEmpty
     }
+}
+
+private extension ColorScheme {
+    var inverted: ColorScheme { self == .dark ? .light : .dark }
 }

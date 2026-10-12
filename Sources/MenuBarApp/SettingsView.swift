@@ -125,6 +125,10 @@ final class AppSettings {
         didSet { Preferences.setTextSize(textSize, in: preferences) }
     }
 
+    var messageColour: MessageColour {
+        didSet { Preferences.setMessageColour(messageColour, in: preferences) }
+    }
+
     var mobileAccessEnabled: Bool {
         didSet { Preferences.setMobileAccessEnabled(mobileAccessEnabled, in: preferences) }
     }
@@ -184,6 +188,7 @@ final class AppSettings {
         opensWorkingSetByDefault = Preferences.opensWorkingSetByDefault(in: preferences)
         diceBearAvatarStyle = Preferences.diceBearAvatarStyle(in: preferences)
         textSize = Preferences.textSize(in: preferences)
+        messageColour = Preferences.messageColour(in: preferences)
         mobileAccessEnabled = Preferences.mobileAccessEnabled(in: preferences)
         sessionRecapsEnabled = Preferences.sessionRecapsEnabled(in: preferences)
         sessionTitlesEnabled = Preferences.sessionTitlesEnabled(in: preferences)
@@ -208,6 +213,7 @@ final class AppSettings {
     func resetAppearance() {
         appearance = .system
         textSize = .standard
+        messageColour = .projectIcon
         diceBearAvatarStyle = .waves
         sidebarIconSet = .diceBear
         opensWorkingSetByDefault = false
@@ -863,8 +869,66 @@ struct SettingsView: View {
                     }
                 }
                 .padding(14)
+
+                SettingsRowDivider()
+
+                VStack(alignment: .leading, spacing: 12) {
+                    settingCopy(
+                        title: "Your messages",
+                        detail: "The colour behind what you send in a session.")
+
+                    MessageColourPicker(selection: settings.messageColour,
+                                        projectTints: previewProjectTints) { colour in
+                        settings.messageColour = colour
+                    }
+
+                    messageColourNote
+                }
+                .padding(14)
             }
         }
+    }
+
+    // The bubble colours the sample projects would get, read the same way the sidebar
+    // reads them, so the picker changes with the icon style.
+    private var previewProjectTints: [Theme.ProjectTint] {
+        Self.previewProjects.map { project in
+            SidebarAvatar(subject: .project, id: project.id).identityTint(
+                iconSet: settings.sidebarIconSet,
+                style: settings.diceBearAvatarStyle,
+                name: project.name,
+                monogramTint: Theme.projectTint(for: project.name))
+        }
+    }
+
+    private var messageColourNote: some View {
+        HStack(alignment: .top, spacing: 10) {
+            if settings.messageColour == .projectIcon {
+                HStack(spacing: 3) {
+                    ForEach(Self.previewProjects) { project in
+                        SidebarIdentityTile(
+                            avatar: SidebarAvatar(subject: .project, id: project.id),
+                            name: project.name,
+                            tint: Theme.projectTint(for: project.name),
+                            side: 16)
+                    }
+                }
+                .padding(.top, 1)
+                .accessibilityHidden(true)
+
+                Text("Each project's messages take the main colour of its \(Text("sidebar icon").fontWeight(.semibold).foregroundStyle(.primary)), so you can tell which project a session belongs to at a glance. Switching icon style changes them too.")
+            } else {
+                Text("Every session uses \(Text(settings.messageColour.label).fontWeight(.semibold).foregroundStyle(.primary)), whatever the project.")
+            }
+        }
+        .font(.system(size: 11.5))
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(Theme.sunken, cornerRadius: 9, border: Theme.settingsHairline)
+        .accessibilityElement(children: .combine)
     }
 
     private var workingSet: some View {
@@ -1560,6 +1624,110 @@ private struct SettingsSearchResultItem: View {
     }
 }
 
+// Each colour is shown as a small bubble wearing it, so the choice is judged by the thing
+// it changes. The arrow keys step through the colours like a radio group.
+private struct MessageColourPicker: View {
+    let selection: MessageColour
+    let projectTints: [Theme.ProjectTint]
+    let choose: (MessageColour) -> Void
+
+    @FocusState private var focused: MessageColour?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(MessageColour.allCases) { colour in
+                choice(colour)
+            }
+        }
+        .onMoveCommand { direction in
+            let step = switch direction {
+            case .left, .up: -1
+            case .right, .down: 1
+            @unknown default: 0
+            }
+            let all = MessageColour.allCases
+            guard step != 0, let index = all.firstIndex(of: focused ?? selection) else { return }
+            let next = all[(index + step + all.count) % all.count]
+            choose(next)
+            focused = next
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Your message colour")
+    }
+
+    private func choice(_ colour: MessageColour) -> some View {
+        let selected = selection == colour
+        let isFocused = focused == colour
+        return Button { choose(colour) } label: {
+            VStack(spacing: 7) {
+                MessageColourMiniBubble(colour: colour, projectTints: projectTints)
+                Text(colour.label)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .lineLimit(1)
+                    .foregroundStyle(selected ? Color.primary : Color.secondary)
+            }
+            .padding(.horizontal, 4)
+            .padding(.top, 8)
+            .padding(.bottom, 7)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 9).fill(selected ? Theme.sunken : .clear))
+            .overlay(RoundedRectangle(cornerRadius: 9)
+                .strokeBorder(Theme.accent, lineWidth: isFocused ? 2 : 1.5)
+                .opacity(selected || isFocused ? 1 : 0))
+            .contentShape(RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+        .hoverLift()
+        .focused($focused, equals: colour)
+        .accessibilityLabel("\(colour.label) message colour")
+        .accessibilityValue(selected ? "Selected" : "Not selected")
+    }
+}
+
+private struct MessageColourMiniBubble: View {
+    let colour: MessageColour
+    let projectTints: [Theme.ProjectTint]
+
+    private let shape = UnevenRoundedRectangle(topLeadingRadius: 8, bottomLeadingRadius: 8,
+                                               bottomTrailingRadius: 3, topTrailingRadius: 8)
+
+    var body: some View {
+        let style = colour.style(projectTint: projectTints.first)
+        fill(style)
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Capsule().frame(width: 30, height: 3)
+                    Capsule().frame(width: 20, height: 3)
+                }
+                .foregroundStyle(Color.primary.opacity(0.16))
+                .padding(.leading, 8)
+                .padding(.top, 8)
+                .environment(\.colorScheme, style.inverts ? inverted : scheme)
+            }
+            .frame(width: 52, height: 26)
+            .clipShape(shape)
+            .overlay(shape.stroke(colour == .projectIcon ? Theme.settingsBorder : style.ring))
+            .accessibilityHidden(true)
+    }
+
+    @Environment(\.colorScheme) private var scheme
+    private var inverted: ColorScheme { scheme == .dark ? .light : .dark }
+
+    // Project icon has no one colour, so its sample is striped with the colours the
+    // sample projects would get.
+    @ViewBuilder private func fill(_ style: UserMessageStyle) -> some View {
+        if colour == .projectIcon {
+            HStack(spacing: 0) {
+                ForEach(Array(projectTints.enumerated()), id: \.offset) { _, tint in
+                    UserMessageStyle.tinted(tint.colour).fill
+                }
+            }
+        } else {
+            style.fill
+        }
+    }
+}
+
 private struct SettingsThemeChoice: View {
     let appearance: Appearance
     let selected: Bool
@@ -1843,6 +2011,8 @@ enum SettingsSearchIndex {
                "appearance system light dark macos"),
         result("Session text", .appearance, .appearanceTheme,
                "appearance size small regular large transcript diff terminal"),
+        result("Your messages", .appearance, .appearanceTheme,
+               "appearance colour color bubble prompt sent project icon stone paper lemon leaf ink"),
         result("Open working set automatically", .appearance, .appearanceWorkingSet,
                "appearance session layout panel sidebar default first turn agent closed open"),
         result("Sidebar icons", .appearance, .appearanceSidebarIcons,

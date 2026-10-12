@@ -1713,7 +1713,8 @@ struct SessionView: View {
                                    messages: ArraySlice<ChatMessage>,
                                    state: SessionState, projectPath: String,
                                    loadEarlier: @escaping () -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
+        let bubble = appSettings.userMessageStyle(for: session, in: store)
+        return VStack(alignment: .leading, spacing: 18) {
             // Only for a session that has nothing to say yet, never for one whose
             // conversation is still being read in.
             if session.messages.isEmpty, !store.isTranscriptLoading(sessionID) {
@@ -1757,7 +1758,8 @@ struct SessionView: View {
                             },
                             showInExplorer: showInExplorer,
                             promptMenu: promptMenu(for: message),
-                            arriving: message.isArriving(sentAt: promptSentAt))
+                            arriving: message.isArriving(sentAt: promptSentAt),
+                            bubble: bubble)
                     // Every message is on screen now, and a streaming turn rewrites
                     // the last one many times a second. Without this, each of those
                     // redraws every message in the transcript, parsing its markdown

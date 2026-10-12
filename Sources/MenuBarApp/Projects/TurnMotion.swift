@@ -583,14 +583,16 @@ private struct SwapTurn: ViewModifier {
 // back draws its bubbles where they are.
 struct PromptArrival<Outline: Shape>: ViewModifier {
     let active: Bool
+    let ringColour: Color
     let outline: Outline
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var flight: CGFloat
     @State private var ring: CGFloat = 0
 
-    init(active: Bool, outline: Outline) {
+    init(active: Bool, ringColour: Color, outline: Outline) {
         self.active = active
+        self.ringColour = ringColour
         self.outline = outline
         _flight = State(initialValue: active ? 0 : 1)
     }
@@ -602,7 +604,7 @@ struct PromptArrival<Outline: Shape>: ViewModifier {
                 .background {
                     Tweened(progress: ring) { ring in
                         outline
-                            .fill(Theme.userMessageRing)
+                            .fill(ringColour)
                             .padding(-5 * (1 - ring))
                             .opacity(ring > 0 && ring < 1 ? 1 - ring : 0)
                     }

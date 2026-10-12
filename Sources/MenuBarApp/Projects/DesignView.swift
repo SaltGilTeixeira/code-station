@@ -252,6 +252,7 @@ struct DesignView: View {
 
     private func transcript(_ session: ChatSession, width: CGFloat) -> some View {
         let projectPath = store.workingDirectory(for: session) ?? ""
+        let bubble = appSettings.userMessageStyle(for: session, in: store)
         return ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -270,7 +271,8 @@ struct DesignView: View {
                                     projectPath: projectPath,
                                     textScale: textScale,
                                     availableWidth: width - 28,
-                                    arriving: message.isArriving(sentAt: promptSentAt))
+                                    arriving: message.isArriving(sentAt: promptSentAt),
+                                    bubble: bubble)
                             .equatable()
                             .environment(\.runningAgents, runner.runningAgents(sessionID))
                             .environment(\.activeTranscriptTools, runner.runningTools(sessionID))

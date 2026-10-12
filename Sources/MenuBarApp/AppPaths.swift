@@ -546,6 +546,15 @@ enum Preferences {
         store.set(textSize.rawValue, forKey: "textSize")
     }
 
+    static func messageColour(in store: UserDefaults = .standard) -> MessageColour {
+        store.string(forKey: "messageColour").flatMap(MessageColour.init(rawValue:))
+            ?? .projectIcon
+    }
+
+    static func setMessageColour(_ colour: MessageColour, in store: UserDefaults = .standard) {
+        store.set(colour.rawValue, forKey: "messageColour")
+    }
+
     static func designAmbition(in store: UserDefaults = .standard) -> DesignAmbition {
         DesignAmbition.valid(store.string(forKey: "designAmbition")) ?? .fallback
     }

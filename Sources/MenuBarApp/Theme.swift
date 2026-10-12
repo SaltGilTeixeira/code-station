@@ -20,9 +20,10 @@ enum Theme {
 
     // The canvas a pane sits on. The sidebar is a shade under it and a card a shade over
     // it, so the three surfaces separate without a single line between them.
-    static let backgroundNSColor = adaptiveNSColor(
-        light: NSColor(srgbRed: 0.961, green: 0.953, blue: 0.929, alpha: 1),
-        dark: NSColor(srgbRed: 0.082, green: 0.082, blue: 0.075, alpha: 1))
+    static let canvasLightNSColor = NSColor(srgbRed: 0.961, green: 0.953, blue: 0.929, alpha: 1)
+    static let canvasDarkNSColor = NSColor(srgbRed: 0.082, green: 0.082, blue: 0.075, alpha: 1)
+    static let backgroundNSColor = adaptiveNSColor(light: canvasLightNSColor,
+                                                   dark: canvasDarkNSColor)
     static let background = Color(nsColor: backgroundNSColor)
     static let sidebar = adaptive(
         light: NSColor(srgbRed: 0.937, green: 0.929, blue: 0.898, alpha: 1),
@@ -80,9 +81,8 @@ enum Theme {
     // needs a colour of its own.
     static let brand = Color(red: 0.867, green: 0.878, blue: 0.282)
 
-    // The one tinted block in a transcript. It is the brand yellow taken most of the way
-    // to a leaf green, so a person's turn is picked out of the page without the agent's
-    // answers having to be tinted in reply.
+    // Leaf, one of the colours a person's own messages can wear (see MessageColour). It
+    // is the brand yellow taken most of the way to a leaf green.
     static let userMessage = adaptive(
         light: NSColor(srgbRed: 0.902, green: 0.914, blue: 0.784, alpha: 1),
         dark: NSColor(srgbRed: 0.180, green: 0.196, blue: 0.129, alpha: 1))
