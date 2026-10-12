@@ -17,6 +17,7 @@ import SwiftUI
 struct SessionRunButton: View {
     @Environment(ShortcutStore.self) private var shortcuts
     @Environment(ProjectStore.self) private var store
+    @Environment(DialogPresenter.self) private var dialogs
 
     let session: ChatSession
     let edit: (ShortcutEditorRequest) -> Void
@@ -302,11 +303,28 @@ struct SessionRunButton: View {
         ]
         if !command.shortcut.availableInAllProjects {
             entries.append(.separator)
-            entries.append(.item("Remove", kind: .destructive, action: {
-                shortcuts.remove(command.shortcut.id)
-            }))
+            entries.append(.item("Remove", kind: .destructive, action: { confirmRemove(command) }))
         }
         return entries
+    }
+
+    // The list goes away first, or its key monitor would take the Return and Escape
+    // meant for the dialog.
+    private func confirmRemove(_ command: Command) {
+        closeList()
+        let shortcut = command.shortcut
+        var rows = [Dialog.Impact.Row(title: "Saved command", detail: "Removed from this project.")]
+        if shortcuts.isRunningAnywhere(shortcut.id) {
+            rows.append(.init(title: "Running commands", detail: "Stopped right away."))
+        }
+        rows.append(.init(title: "Projects and conversations", detail: "Kept unchanged.", kept: true))
+        dialogs.show(.impact("Remove \(shortcut.name)?",
+                             subject: command.projectName.map { .init(name: $0) },
+                             rows: rows,
+                             warning: "This shortcut cannot be restored after removal.",
+                             action: "Remove shortcut") {
+            shortcuts.remove(shortcut.id)
+        })
     }
 
     private var newMenu: [MenuEntry] {
