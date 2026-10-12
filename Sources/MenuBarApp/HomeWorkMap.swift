@@ -161,9 +161,6 @@ struct HomeWorkMapView: View {
     let answer: (HomeLive, PermissionAnswer) -> Void
     // Shows a project or workspace in the sidebar, where all of its sessions are listed.
     let reveal: (HomeWorkMap.Group) -> Void
-    // The session offered as the way back in when nothing is running.
-    let resumable: HomeLive?
-    let startSession: () -> Void
     // Whether the orbit builds itself up as it appears. It does once each time Home opens,
     // and the map reports when that has been used up.
     let opening: Bool
@@ -274,32 +271,16 @@ struct HomeWorkMapView: View {
 
             VStack(spacing: 5) {
                 Text("Room for your next idea").font(.serif(17, .semibold))
-                Text("Nothing is running. Start something new, or pick up where you left off.")
+                Text("Nothing is running.")
                     .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .combine)
-
-            HStack(spacing: 8) {
-                ActionButton(title: "Start a session", tone: .green, height: 30, size: 12.5,
-                             action: startSession)
-                if let resumable {
-                    ActionButton(title: "Resume “\(Self.shortened(resumable.session.title))”",
-                                 tone: .outlined, height: 30, size: 12.5) {
-                        open(resumable, resumable.primaryAction(hasChanges: hasChanges(resumable)).destination)
-                    }
-                }
-            }
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 6)
-    }
-
-    // A title cut to fit on a button beside another one.
-    private static func shortened(_ title: String) -> String {
-        title.count > 40 ? title.prefix(39).trimmingCharacters(in: .whitespaces) + "…" : title
     }
 }
 
