@@ -90,11 +90,11 @@ struct OrbitLayout {
         }
     }
 
-    static let ringRadius: CGFloat = 94
-    static let ringWidth: CGFloat = 13
-    static let projectRingRadius: CGFloat = 112
+    static let ringRadius: CGFloat = 76
+    static let ringWidth: CGFloat = 11
+    static let projectRingRadius: CGFloat = 91
     static let projectRingWidth: CGFloat = 3
-    static let orbitRadius: CGFloat = 70
+    static let orbitRadius: CGFloat = 57
     static let hubSide: CGFloat = 2 * projectRingRadius + 6
     // The space left at each end of an arc, as a fraction of a turn.
     static let arcGap: CGFloat = 0.022 / (2 * .pi)
@@ -113,8 +113,9 @@ struct OrbitLayout {
     // the row.
     static let tileLift: CGFloat = 8
     private static let margin: CGFloat = 22
-    // Room for the ring, so a map with one project in each column still holds it.
-    static let minHeight: CGFloat = hubSide + 2 * margin + 34
+    // Room for the ring with space around it, and for a medium day's column of pills, so
+    // the map keeps one height on most days.
+    static let minHeight: CGFloat = hubSide + 2 * margin + 76
 
     // How much height a project takes when it has a single session: the tile, its halo and
     // the name under it.
