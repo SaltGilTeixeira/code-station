@@ -29,6 +29,8 @@ struct Tooltip {
     let title: String
     var subtitle: String?
     var note: String?
+    // The keys that do the same thing, each drawn as a keycap beside the title.
+    var keys: [String] = []
     var rows: [Row] = []
     var action: (() -> Void)?
     var persistsOnHover = false
@@ -38,7 +40,9 @@ struct Tooltip {
 
     // A hint that is only words needs no panel around it, so it is drawn as a plain line
     // instead.
-    var isPlain: Bool { subtitle == nil && note == nil && rows.isEmpty && hanging == nil }
+    var isPlain: Bool {
+        subtitle == nil && note == nil && keys.isEmpty && rows.isEmpty && hanging == nil
+    }
 
     // A whole sentence on one line would run off the side of the window, so past a few
     // words it wraps inside a fixed width rather than hugging its text.
@@ -315,10 +319,18 @@ struct TooltipHost: View {
     private func detailedCard(_ tooltip: Tooltip) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(tooltip.title)
-                    .font(.serif(14, .semibold))
-                    .lineLimit(3)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(tooltip.title)
+                        .font(.serif(14, .semibold))
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if !tooltip.keys.isEmpty {
+                        Spacer(minLength: 6)
+                        ForEach(Array(tooltip.keys.enumerated()), id: \.offset) { _, key in
+                            Keycap(key)
+                        }
+                    }
+                }
                 if let subtitle = tooltip.subtitle {
                     Text(subtitle)
                         .font(.mono(10.5))
@@ -452,5 +464,27 @@ private struct CaretShape: Shape {
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
         if closed { path.closeSubpath() }
         return path
+    }
+}
+
+// One key of a shortcut, drawn as a small raised cap so it reads as a key to press rather
+// than as part of the sentence beside it.
+struct Keycap: View {
+    let key: String
+
+    init(_ key: String) {
+        self.key = key
+    }
+
+    var body: some View {
+        Text(key)
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(.secondary)
+            .frame(minWidth: 18)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
+            .background(RoundedRectangle(cornerRadius: 5).fill(Theme.field))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.border))
+            .accessibilityHidden(true)
     }
 }

@@ -42,6 +42,8 @@ enum KeyboardShortcutsReference {
                                  detail: "Open a tab by its place in the row at the top."),
             KeyboardShortcutHelp(keys: "⌃ `", title: "Terminal",
                                  detail: "Open the terminal drawer, then move between the shell and the composer."),
+            KeyboardShortcutHelp(keys: "⌘ \\", title: "Working set",
+                                 detail: "Show or hide the files and activity beside the chat."),
             KeyboardShortcutHelp(keys: "Esc", title: "Stop the turn",
                                  detail: "Call off the agent while it is working."),
             KeyboardShortcutHelp(keys: "⌃ C", title: "Stop the command",

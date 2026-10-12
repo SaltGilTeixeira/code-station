@@ -495,6 +495,13 @@ enum Preferences {
         set(id, "terminalBundleID", in: store)
     }
 
+    // The app the header's "Open in" button sends a session's folder to. With none
+    // saved, it is Finder.
+    static var openInBundleID: String? {
+        get { text("openInBundleID", in: store) }
+        set { set(newValue, "openInBundleID", in: store) }
+    }
+
     // A saved external site file sits ahead of the conventional and bundled locations.
     // Imported first-run configuration uses the conventional Application Support file.
     static func siteDefaultsURL(in store: UserDefaults = .standard) -> URL? {

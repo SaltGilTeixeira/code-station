@@ -154,6 +154,9 @@ struct SessionScrollTests {
                     .environment(TerminalStore())
                     .environment(settings)
                     .environment(GitStatsCache())
+                    .environment(MobileAccessController(store: harness.store,
+                                                        runner: harness.runner,
+                                                        gitStats: GitStatsCache()))
                     .environment(ShortcutStore(storageURL: harness.scratch.path("shortcuts.json"),
                                                siteDefaults: SiteDefaults()))
                     .environment(GlobalCommandPaletteController())

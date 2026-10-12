@@ -44,6 +44,45 @@ enum MobilePairing {
     }
 }
 
+// How far along a phone link is. Green is kept for a phone that is really on the other
+// end. A code that is out but not picked up yet is amber news, not a live link.
+enum PhoneLink: Equatable {
+    case none
+    case waiting
+    case connected
+
+    static func of(shared: Bool, connected: Bool) -> PhoneLink {
+        if connected { return .connected }
+        return shared ? .waiting : .none
+    }
+
+    // The words the rail shows. The pairing does not say what the phone is called, so it
+    // is named as a phone.
+    var word: String? {
+        switch self {
+        case .none: nil
+        case .waiting: "Waiting for phone"
+        case .connected: "Phone connected"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .none: .secondary
+        case .waiting: Theme.attentionText
+        case .connected: Theme.addition
+        }
+    }
+
+    var fill: Color? {
+        switch self {
+        case .none: nil
+        case .waiting: Theme.attention.opacity(0.11)
+        case .connected: HeaderRailState.live.seat
+        }
+    }
+}
+
 // The QR button as a header wears it. The same control sits on a session, on a project and
 // on Home; what changes is how far the code it makes can reach.
 struct MobileAccessButton: View {
@@ -51,9 +90,11 @@ struct MobileAccessButton: View {
     // Smaller where it shares a line with the session's own facts rather than sitting in
     // a header of its own.
     var side: CGFloat = 30
-    // On the session header the button joins a rail of icon buttons and takes their
-    // shape, rather than the glyph square it wears when it stands on its own.
+    // On the session header the button becomes a capsule that names the link once there
+    // is one, since it is the only thing on the rail that speaks for something outside
+    // the app.
     var onRail = false
+    var showsWord = true
 
     @Environment(MobileAccessController.self) private var mobileAccess
     @Environment(DialogPresenter.self) private var dialogs
@@ -63,14 +104,12 @@ struct MobileAccessButton: View {
         let share = mobileAccess.share(for: scope)
         let connected = mobileAccess.isLive(scope)
         let label = tooltip(shared: share != nil, connected: connected)
-        let rail = Self.rail(shared: share != nil, connected: connected)
         return Group {
             if onRail {
-                HeaderRailButton(icon: "qrcode",
-                                 state: rail.state,
-                                 badge: rail.dot,
-                                 label: label,
-                                 action: open)
+                PhoneCapsule(link: .of(shared: share != nil, connected: connected),
+                             showsWord: showsWord,
+                             label: label,
+                             action: open)
             } else {
                 let tint = if connected {
                     Theme.addition
@@ -86,13 +125,6 @@ struct MobileAccessButton: View {
         }
     }
 
-    // What the button says on the rail. A code that is out but that no phone has picked it
-    // up is news rather than a live link, so it stays grey with a dot: on the rail green is
-    // kept for a phone actually being on the other end, which no other button can say.
-    static func rail(shared: Bool, connected: Bool) -> (state: HeaderRailState, dot: Bool) {
-        (connected ? .live : .rest, shared && !connected)
-    }
-
     private func tooltip(shared: Bool, connected: Bool) -> String {
         if connected { return "Phone connected" }
         if shared { return "Shared with a phone" }
@@ -105,6 +137,60 @@ struct MobileAccessButton: View {
 
     private func open() {
         MobilePairing.open(scope: scope, dialogs: dialogs, store: store)
+    }
+}
+
+// The phone button on the session rail. With nothing shared it is a bare QR glyph; once a
+// code is out it fills amber and says it is waiting, and once a phone joins it turns green
+// with a slow ring around its light.
+private struct PhoneCapsule: View {
+    let link: PhoneLink
+    let showsWord: Bool
+    let label: String
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                switch link {
+                case .none:
+                    Image(systemName: "qrcode")
+                        .font(.system(size: 13, weight: .semibold))
+                case .waiting:
+                    Circle()
+                        .fill(Theme.attention)
+                        .frame(width: 6, height: 6)
+                case .connected:
+                    PulsingDot(colour: Theme.addition, size: 6)
+                }
+                if showsWord, let word = link.word {
+                    Text(word)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize()
+                        .transition(.opacity)
+                }
+            }
+            .foregroundStyle(link == .none && hovering ? Color.primary : link.tint)
+            .padding(.horizontal, link == .none ? 8 : 10)
+            .frame(minWidth: 30, minHeight: 30)
+            .background(Capsule().fill(link.fill ?? (hovering ? Theme.field : Color.clear)))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .motion(Motion.hover, value: hovering)
+        .motion(HeaderMotion.slide, value: link)
+        .appTooltip(delay: .zero) {
+            Tooltip(title: label,
+                    subtitle: link == .none
+                        ? "Scan a code to follow this session"
+                        : "Show the code or stop sharing")
+        }
+        .accessibilityLabel("Phone")
+        .accessibilityValue(link.word ?? "Not shared")
     }
 }
 

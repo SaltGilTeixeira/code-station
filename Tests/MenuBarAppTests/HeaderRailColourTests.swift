@@ -54,10 +54,38 @@ struct HeaderRailColourTests {
     }
 
     // Green on the rail has to mean a phone is on the other end. A code that is out with
-    // nothing attached used to wear the same accent as an open panel.
-    @Test func aShareWithNoPhoneOnItKeepsItsColourOff() {
-        #expect(MobileAccessButton.rail(shared: false, connected: false) == (.rest, false))
-        #expect(MobileAccessButton.rail(shared: true, connected: false) == (.rest, true))
-        #expect(MobileAccessButton.rail(shared: true, connected: true) == (.live, false))
+    // nothing attached is amber news, not a live link.
+    @Test func aShareWithNoPhoneOnItWaitsInAmber() {
+        #expect(PhoneLink.of(shared: false, connected: false) == .none)
+        #expect(PhoneLink.of(shared: true, connected: false) == .waiting)
+        #expect(PhoneLink.of(shared: true, connected: true) == .connected)
+        // A session followed by a phone counts as connected even before a code is listed.
+        #expect(PhoneLink.of(shared: false, connected: true) == .connected)
+        #expect(PhoneLink.none.word == nil)
+        #expect(PhoneLink.waiting.word != nil)
+        #expect(PhoneLink.connected.word != nil)
+    }
+
+    // The phone capsule's words sit on a tint of their own colour, on the band the rail
+    // is drawn on, so both appearances have to keep them readable.
+    @Test func thePhoneCapsuleWordsAreReadable() throws {
+        for appearance in try appearances() {
+            let band = try swatch(Theme.statusBand, in: appearance)
+            for link in [PhoneLink.waiting, .connected] {
+                let fill = try swatch(#require(link.fill), in: appearance).over(band)
+                let text = try swatch(link.tint, in: appearance)
+                #expect(text.contrast(against: fill) >= 4.5,
+                        "\(link) on \(appearance.name.rawValue)")
+            }
+        }
+    }
+
+    // An open seat rises to a card and names its panel in the accent.
+    @Test func theOpenSeatWordIsReadable() throws {
+        for appearance in try appearances() {
+            let seat = try swatch(Theme.card, in: appearance)
+            let word = try swatch(Theme.accent, in: appearance)
+            #expect(word.contrast(against: seat) >= 4.5, "\(appearance.name.rawValue)")
+        }
     }
 }

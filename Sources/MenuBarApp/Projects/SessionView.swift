@@ -137,6 +137,7 @@ struct SessionView: View {
     @Environment(MenuPresenter.self) private var menus
     @Environment(AppSettings.self) private var appSettings
     @Environment(GitStatsCache.self) private var gitStats
+    @Environment(MobileAccessController.self) private var mobileAccess
     @Environment(ShortcutStore.self) private var shortcuts
     @Environment(GlobalCommandPaletteController.self) private var commandPalette
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -203,8 +204,8 @@ struct SessionView: View {
     // them and go back into them.
     @State private var findOrigin: CGPoint?
     @State private var recapOrigin: CGPoint?
-    @State private var finderNotes = 0
-    @State private var finderNoteVisible = false
+    @State private var railNotes = 0
+    @State private var railNote: String?
 
     private let bottomAnchor = "transcript-bottom"
     private var terminalScope: TerminalScope { .session(sessionID) }
@@ -353,6 +354,7 @@ struct SessionView: View {
                 .appOverlays()
             }
             .background(terminalShortcut(directory: workingDirectory))
+            .background(workingSetShortcut)
             .background(tabShortcuts(headerTabs(for: session)))
             .task(id: designFilesURL) {
                 // Agents and external editors write artifacts without changing the store.
@@ -460,15 +462,12 @@ struct SessionView: View {
 
     // MARK: - The two decks
 
-    // What each deck gives up to fit the pane, in the order it is worth giving up.
-    // Nothing here drops an action: the rail is where every one of them lives, so it is
-    // a rail that is always whole and reachable, however narrow the window is pulled.
+    // What the identity deck gives up to fit the pane. Nothing here drops an action: the
+    // rail on the deck below is where every one of them lives.
     private enum HeaderFit {
-        // Every group on the rail, and the branch chip at the width a name deserves.
+        // The branch chip at the width a name deserves.
         case whole
-        // The utilities behind one button, and the branch cut back to a stub. They are
-        // the parts reached for least often, and the utilities are the only group whose
-        // words survive being put in a menu.
+        // The branch cut back to a stub.
         case folded
     }
 
@@ -604,15 +603,25 @@ struct SessionView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    // What the rail gives up as the pane narrows, in the order it is worth giving up:
+    // words first, then the session's actions fold behind one button. The dock never
+    // folds, since it holds the panels reached for most.
+    private enum RailFit {
+        case wide
+        case medium
+        case narrow
+    }
+
     // The second deck: where to go on the left, what to open beside where you already are
     // on the right. The gap between the two is the line the tab bar's edge used to carry.
     private func destinationDeck(session: ChatSession, project: Project,
                                  recap: SessionRecap?) -> some View {
         ViewThatFits(in: .horizontal) {
-            destinationRow(session: session, project: project, recap: recap, fit: .whole)
-            destinationRow(session: session, project: project, recap: recap, fit: .folded)
+            destinationRow(session: session, project: project, recap: recap, fit: .wide)
+            destinationRow(session: session, project: project, recap: recap, fit: .medium)
+            destinationRow(session: session, project: project, recap: recap, fit: .narrow)
             // Even the folded rail can leave too little room for every tab label.
-            destinationRow(session: session, project: project, recap: recap, fit: .folded,
+            destinationRow(session: session, project: project, recap: recap, fit: .narrow,
                            scrollsTabs: true)
         }
         .overlay(alignment: .topTrailing) {
@@ -622,7 +631,7 @@ struct SessionView: View {
     }
 
     private func destinationRow(session: ChatSession, project: Project,
-                                recap: SessionRecap?, fit: HeaderFit,
+                                recap: SessionRecap?, fit: RailFit,
                                 scrollsTabs: Bool = false) -> some View {
         HStack(spacing: 8) {
             HeaderTabDeck(tabs: headerTabs(for: session),
@@ -638,58 +647,86 @@ struct SessionView: View {
         .headerBand(Theme.statusBand, height: Self.destinationDeckHeight)
     }
 
-    // What the pane can open beside where you already are: the panel toggles, then what
-    // the session itself offers. A hairline closes each group, so the
-    // rail reads as a few things rather than as a row of icons.
+    // What the pane can open beside where you already are, then what the session itself
+    // offers. The panels share a dock and the actions use words, so the two groups read
+    // as different kinds of thing without a hover to tell them apart.
     private func rail(session: ChatSession, project: Project, recap: SessionRecap?,
-                      fit: HeaderFit) -> some View {
-        HStack(spacing: 9) {
-            panelToggles(session: session, project: project)
+                      fit: RailFit) -> some View {
+        HStack(spacing: 10) {
+            panelDock(session: session, project: project, showsWords: fit == .wide)
             if hasUtilities(session: session) {
                 HeaderRailDivider()
-                if fit == .whole {
-                    utilities(session: session, project: project, recap: recap)
-                } else {
+                if fit == .narrow {
                     utilitiesOverflow(session: session, project: project)
+                } else {
+                    utilities(session: session, project: project, recap: recap,
+                              showsWords: fit == .wide)
                 }
             }
         }
         .fixedSize(horizontal: true, vertical: false)
+        .overlay(alignment: .topTrailing) {
+            if let railNote {
+                HeaderNote(icon: "arrow.up.forward.app", text: railNote)
+                    .offset(y: Self.destinationDeckHeight + 2)
+                    .transition(reduceMotion
+                                ? .opacity
+                                : .opacity.combined(with: .offset(y: -6)))
+            }
+        }
+        .motion(Motion.reveal, value: railNote)
     }
 
-    // Neither of these sends you anywhere: they open a panel beside the pane and leave
-    // what you were reading where it was. Keeping them off the tab deck is what gives the
-    // gap between the two its meaning - inside the deck you choose where to be, outside
-    // it you open something next to where you already are. Without a word beside them
-    // they carry a tooltip, which the worded tabs do not need.
-    private func panelToggles(session: ChatSession, project: Project) -> some View {
+    // None of these sends you anywhere: they open a panel beside the pane and leave what
+    // you were reading where it was. Keeping them off the tab deck is what gives the gap
+    // between the two its meaning - inside the deck you choose where to be, outside it
+    // you open something next to where you already are.
+    private func panelDock(session: ChatSession, project: Project,
+                           showsWords: Bool) -> some View {
         let directory = session.worktreePath ?? project.path
         let terminalOpen = terminals.isOpen(terminalScope)
-        return HStack(spacing: 2) {
-            // A shell in the drawer and a shell in a window of its own are the same wish
-            // reached two ways, so the press offers both and the terminal setting only
-            // says which of them the menu names first.
-            HeaderRailButton(icon: "terminal",
-                             state: terminalOpen ? .open : .rest,
-                             label: "Open a shell here or in \(SystemTerminal.appName)")
-                .appMenu {
-                    terminalEntries(isOpen: terminalOpen,
-                                    toggle: { toggleTerminal(directory: directory) },
-                                    directory: directory)
+        return HeaderRailDock {
+            // The glyph toggles the drawer; the other ways to reach a shell sit behind the
+            // chevron, so the most common one is a single click.
+            HeaderDockSeat(
+                icon: "terminal",
+                word: "Terminal",
+                isOpen: terminalOpen,
+                showsWord: showsWords,
+                keys: ["⌃", "`"],
+                detail: "A shell under the chat, in this session's folder",
+                options: .init(label: "Other ways to open a shell") {
+                    terminalOptions(isOpen: terminalOpen, directory: directory)
+                }) {
+                    toggleTerminal(directory: directory)
                 }
-            workingSetToggle
-            if !session.isActivelyDesigning {
-                findToggle
-            }
+            workingSetSeat(session, showsWord: showsWords)
+            findSeat(session, showsWord: showsWords)
         }
     }
 
-    private var findToggle: some View {
+    private func terminalOptions(isOpen: Bool, directory: String) -> [MenuEntry] {
+        terminalEntries(isOpen: isOpen,
+                        toggle: { toggleTerminal(directory: directory) },
+                        directory: directory)
+            + [.separator,
+               .item("Copy cd command", icon: "doc.on.doc",
+                     subtitle: "cd \(directory.shellQuoted)", monospacedSubtitle: true) {
+                   Pasteboard.copy("cd \(directory.shellQuoted)")
+                   showRailNote("Copied the cd command")
+               }]
+    }
+
+    // Find has nothing to search while a Design is on screen. It stays in the dock,
+    // greyed out, so the seats beside it do not shift when designing starts or stops.
+    private func findSeat(_ session: ChatSession, showsWord: Bool) -> some View {
         let isOpen = tab == .conversation && transcriptFind.isPresented
-        return HeaderRailButton(icon: "magnifyingglass",
-                                state: isOpen ? .open : .rest,
-                                label: isOpen ? "Close find" : "Find in chat",
-                                hint: isOpen ? nil : "Cmd+F or Ctrl+F") {
+        return HeaderDockSeat(icon: "magnifyingglass",
+                              word: "Find",
+                              isOpen: isOpen,
+                              showsWord: showsWord,
+                              keys: ["⌘", "F"],
+                              detail: "Search this conversation") {
             if isOpen {
                 closeFind()
             } else {
@@ -698,43 +735,40 @@ struct SessionView: View {
                 $findFocused.request()
             }
         }
+        .disabled(session.isActivelyDesigning)
         .onCentreChange { findOrigin = $0 }
     }
 
-    private var workingSetToggle: some View {
+    private func workingSetSeat(_ session: ChatSession, showsWord: Bool) -> some View {
         let isOpen = tab == .conversation && workingSetVisible
-        return HeaderRailButton(icon: "sidebar.right",
-                                state: isOpen ? .open : .rest,
-                                label: isOpen ? "Close working set" : "Open working set") {
-            if isOpen {
-                setWorkingSetVisible(false)
-            } else {
-                tab = .conversation
-                setWorkingSetVisible(true)
-            }
+        let files = workingTreeChanges(session)?.files ?? 0
+        return HeaderDockSeat(icon: "sidebar.right",
+                              word: "Working set",
+                              isOpen: isOpen,
+                              count: files > 0 ? files : nil,
+                              showsWord: showsWord,
+                              keys: ["⌘", "\\"],
+                              detail: files > 0
+                                  ? "The \(files) \(files == 1 ? "file" : "files") this session touched"
+                                  : "What the agent did and the files it touched",
+                              action: toggleWorkingSet)
+    }
+
+    private func toggleWorkingSet() {
+        if tab == .conversation && workingSetVisible {
+            setWorkingSetVisible(false)
+        } else {
+            tab = .conversation
+            setWorkingSetVisible(true)
         }
-        .accessibilityValue(isOpen ? "open" : "closed")
     }
 
     // Actions for the session as a whole stay together at the end of the rail.
     private func utilities(session: ChatSession, project: Project,
-                           recap: SessionRecap?) -> some View {
-        HStack(spacing: 2) {
-            if let worktreePath = session.worktreePath {
-                HeaderRailButton(icon: "folder", label: "Open worktree in Finder") {
-                    NSWorkspace.shared.open(URL(fileURLWithPath: worktreePath, isDirectory: true))
-                    showFinderNote()
-                }
-                .overlay(alignment: .topTrailing) {
-                    if finderNoteVisible {
-                        HeaderNote(icon: "arrow.up.forward.app", text: "Opened the worktree in Finder")
-                            .offset(y: Self.destinationDeckHeight + 2)
-                            .transition(reduceMotion
-                                        ? .opacity
-                                        : .opacity.combined(with: .offset(y: -6)))
-                    }
-                }
-                .motion(Motion.reveal, value: finderNoteVisible)
+                           recap: SessionRecap?, showsWords: Bool) -> some View {
+        HStack(spacing: 6) {
+            if let worktreePath = session.worktreePath, let app = WorktreeOpener.current {
+                openInButton(path: worktreePath, app: app, showsWord: showsWords)
             }
             if showsDesignMaterialExport(session) {
                 designMaterialExportButton(session: session, project: project)
@@ -756,8 +790,45 @@ struct SessionView: View {
         }
     }
 
+    // Says where the folder goes rather than showing a glyph that only ever meant Finder.
+    // The chevron picks another app, and the pick is kept for next time.
+    private func openInButton(path: String, app: WorktreeApp, showsWord: Bool) -> some View {
+        HeaderSplitButton(
+            image: WorktreeOpener.icon(for: app),
+            word: "Open in \(app.name)",
+            showsWord: showsWord,
+            menuLabel: "Choose where to open",
+            tooltip: {
+                Tooltip(title: "Open worktree in \(app.name)", subtitle: path.abbreviatedPath)
+            },
+            action: { openWorktree(path, in: app) },
+            refresh: { WorktreeOpener.refresh() },
+            entries: { openInEntries(path: path, current: app) })
+    }
+
+    private func openInEntries(path: String, current: WorktreeApp) -> [MenuEntry] {
+        WorktreeOpener.apps.map { app in
+            .item(app.name, image: WorktreeOpener.icon(for: app), imageShape: .tile,
+                  checked: app == current) {
+                WorktreeOpener.choose(app)
+                openWorktree(path, in: app)
+            }
+        } + [
+            .separator,
+            .item("Copy path", icon: "doc.on.doc") {
+                Pasteboard.copy(path)
+                showRailNote("Copied the worktree path")
+            },
+        ]
+    }
+
+    private func openWorktree(_ path: String, in app: WorktreeApp) {
+        WorktreeOpener.open(path, in: app)
+        showRailNote("Opened the worktree in \(app.name)")
+    }
+
     // The same actions behind one button, for a window too narrow to hold the rail. The
-    // utilities fold before the toggles and the tab deck do: they are the group you reach
+    // utilities fold before the dock and the tab deck do: they are the group you reach
     // for least often, and the only one whose words survive being put in a menu.
     private func utilitiesOverflow(session: ChatSession, project: Project) -> some View {
         HeaderRailButton(icon: "ellipsis",
@@ -765,15 +836,26 @@ struct SessionView: View {
                          label: "More session actions")
             // The recap's own button is folded in here, so its card grows from this one.
             .onCentreChange { recapOrigin = $0 }
-            .appMenu { utilityEntries(session: session, project: project) }
+            .appMenu(refreshOnOpen: { WorktreeOpener.refresh() }) {
+                utilityEntries(session: session, project: project)
+            }
     }
 
     private func utilityEntries(session: ChatSession, project: Project) -> [MenuEntry] {
         var entries: [MenuEntry] = []
-        if let worktreePath = session.worktreePath {
-            entries.append(.item("Open worktree in Finder", icon: "folder") {
-                NSWorkspace.shared.open(URL(fileURLWithPath: worktreePath, isDirectory: true))
-            })
+        if let worktreePath = session.worktreePath, let current = WorktreeOpener.current {
+            // Finder stays one click away whichever app was picked.
+            var apps = [current]
+            if current.bundleID != WorktreeOpener.finderID,
+               let finder = WorktreeOpener.apps.first(where: { $0.bundleID == WorktreeOpener.finderID }) {
+                apps.append(finder)
+            }
+            for app in apps {
+                entries.append(.item("Open in \(app.name)", image: WorktreeOpener.icon(for: app),
+                                     imageShape: .tile) {
+                    openWorktree(worktreePath, in: app)
+                })
+            }
         }
         if showsDesignMaterialExport(session) {
             entries.append(.item("Export Design materials", icon: "doc.zipper") {
@@ -785,7 +867,10 @@ struct SessionView: View {
                                  showsUpdate: recapNeedsAttention, action: toggleRecap))
         }
         if appSettings.mobileAccessEnabled {
-            entries.append(.item(MobilePairing.menuLabel, icon: "qrcode") {
+            let link = PhoneLink.of(shared: mobileAccess.share(for: .session(sessionID)) != nil,
+                                    connected: mobileAccess.isLive(.session(sessionID)))
+            entries.append(.item(MobilePairing.menuLabel, icon: "qrcode",
+                                 subtitle: link.word ?? "Not shared") {
                 MobilePairing.open(scope: .session(sessionID), dialogs: dialogs, store: store)
             })
         }
@@ -1158,6 +1243,12 @@ struct SessionView: View {
         .opacity(0)
     }
 
+    private var workingSetShortcut: some View {
+        Button("", action: toggleWorkingSet)
+            .keyboardShortcut("\\", modifiers: .command)
+            .opacity(0)
+    }
+
     // MARK: - Find in chat
 
     private var currentMessages: [ChatMessage] {
@@ -1248,21 +1339,21 @@ struct SessionView: View {
         }
     }
 
-    // The button both opens and shuts it; opening puts the cursor straight in the shell
-    // so it can be used without reaching for the mouse again.
-    // Finder opens over the window, so the note is all the window itself shows of the
-    // click. A second click keeps the note up rather than letting the first one's timer
-    // take it down early.
-    private func showFinderNote() {
-        finderNotes += 1
-        let note = finderNotes
-        finderNoteVisible = true
+    // The app a folder opens in comes up over the window, and a copy shows nothing at
+    // all, so the note is all the window itself shows of the click. A second click keeps
+    // the note up rather than letting the first one's timer take it down early.
+    private func showRailNote(_ text: String) {
+        railNotes += 1
+        let note = railNotes
+        railNote = text
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.9))
-            if finderNotes == note { finderNoteVisible = false }
+            if railNotes == note { railNote = nil }
         }
     }
 
+    // The button both opens and shuts it; opening puts the cursor straight in the shell
+    // so it can be used without reaching for the mouse again.
     private func toggleTerminal(directory: String) {
         let opening = !terminals.isOpen(terminalScope)
         terminals.setOpen(opening, for: terminalScope, directory: directory)
