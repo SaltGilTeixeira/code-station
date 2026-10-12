@@ -66,6 +66,47 @@ struct MessageColourTests {
         }
     }
 
+    // Near-black Planets grounds and pale Stripes ones used to give a grey bubble. Every
+    // icon in every style has to show its project's colour, in both appearances.
+    @Test func everySidebarIconGivesAColourfulBubble() throws {
+        let tints = sampleTints() + everyArtworkTint().map(\.tint)
+        for appearance in try appearances() {
+            for (index, tint) in tints.enumerated() {
+                let fill = try swatch(UserMessageStyle.tinted(tint).fill, in: appearance)
+                let chroma = OKLCH(red: fill.red, green: fill.green, blue: fill.blue).chroma
+                #expect(chroma >= 0.02, "tint \(index) on \(appearance.name.rawValue)")
+            }
+        }
+    }
+
+    // The bubble is only worth having if it reads as the icon in the sidebar, including
+    // the styles drawn in several colours with no one background.
+    @Test func theBubbleSharesItsHueWithTheSidebarIcon() throws {
+        for (style, tint) in everyArtworkTint() {
+            let icon = try #require(OKLCH(NSColor(tint)))
+            guard icon.chroma >= 0.02 else { continue }
+            for appearance in try appearances() {
+                let fill = try swatch(UserMessageStyle.tinted(tint).fill, in: appearance)
+                let bubble = OKLCH(red: fill.red, green: fill.green, blue: fill.blue)
+                let gap = abs(bubble.hue - icon.hue)
+                #expect(min(gap, 360 - gap) < 12, "\(style.label) on \(appearance.name.rawValue)")
+            }
+        }
+    }
+
+    @Test func multiColourArtworkGivesAHueFromItsOwnDrawing() throws {
+        for style in [DiceBearAvatarStyle.shapes, .landscape, .weave] {
+            for index in 1...SidebarAvatar.artworkCount {
+                let avatar = SidebarAvatar(subject: .project, id: UUID(), artworkIndex: index)
+                let tint = avatar.identityTint(iconSet: .diceBear, style: style,
+                                              name: "orbit-api",
+                                              monogramTint: Theme.projectTint(for: "orbit-api"))
+                let colour = try #require(OKLCH(NSColor(tint.colour)))
+                #expect(colour.chroma >= 0.04, "\(style.label) \(index)")
+            }
+        }
+    }
+
     private func inverted(_ appearance: NSAppearance) throws -> NSAppearance {
         try #require(NSAppearance(named: Theme.isDark(appearance) ? .aqua : .darkAqua))
     }
@@ -77,6 +118,18 @@ struct MessageColourTests {
             if !seen.contains(colour) { seen.append(colour) }
         }
         return seen
+    }
+
+    private func everyArtworkTint() -> [(style: DiceBearAvatarStyle, tint: Color)] {
+        DiceBearAvatarStyle.allCases.flatMap { style in
+            (1...SidebarAvatar.artworkCount).map { index in
+                let avatar = SidebarAvatar(subject: .project, id: UUID(), artworkIndex: index)
+                let tint = avatar.identityTint(iconSet: .diceBear, style: style,
+                                              name: "orbit-api",
+                                              monogramTint: Theme.projectTint(for: "orbit-api"))
+                return (style, tint.colour)
+            }
+        }
     }
 
     // The project wheel, the workspace olive, and the extremes a sidebar artwork's
