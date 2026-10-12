@@ -7,6 +7,7 @@ enum AgentPersonality: String, CaseIterable, Codable, Sendable {
     case manager
     case frenchManager = "french-manager"
     case navySeal = "navy-seal"
+    case calceteiro
 
     var title: String {
         switch self {
@@ -18,6 +19,7 @@ enum AgentPersonality: String, CaseIterable, Codable, Sendable {
         case .manager: "Manager"
         case .frenchManager: "French Manager"
         case .navySeal: "US Navy SEAL"
+        case .calceteiro: "Calceteiro"
         }
     }
 
@@ -31,6 +33,7 @@ enum AgentPersonality: String, CaseIterable, Codable, Sendable {
         case .manager: "Files a ticket before every keystroke."
         case .frenchManager: "Calls a point de suivi."
         case .navySeal: "Mission focused. No bug left behind."
+        case .calceteiro: "A cowboy builder. Bodges it, then sends the bill."
         }
     }
 
@@ -182,6 +185,26 @@ enum AgentPersonality: String, CaseIterable, Codable, Sendable {
                 "Clearing one function at a time", "Taking ownership of the outcome",
                 "Packing a backup plan", "Staying sharp at zero dark thirty",
                 "Saving the victory lap for after the tests", "Getting it done, hooyah"
+            ]
+        case .calceteiro:
+            [
+                "Hitting it with a hammer", "Eyeballing the measurements",
+                "Saying it was like this when I got here", "Leaving a cobble loose",
+                "Filling the gap with cement", "Calling it rustic",
+                "Skipping the level, it looks straight", "Wedging in a bit of cardboard",
+                "Saying isso aguenta", "Taking a break at the tasca",
+                "Sucking air through my teeth", "Saying who did this before me",
+                "Ordering the wrong part", "Desenrascando", "Saying é pá, isto é chato",
+                "Charging extra for the bug", "Putting it upside down, it still works",
+                "Hiding the crack under a rug", "Reading the manual after",
+                "Saying the patrão won't notice", "Forcing it until it fits",
+                "Using the tests as a doorstop", "Sticking it with silicone",
+                "Losing the screws, again", "Painting over the warning",
+                "Saying amanhã, without fail", "Blaming the last guy",
+                "Swapping the hammer for a bigger hammer", "Counting the leftover bits",
+                "Calling the gaps a feature", "Promising a guarantee, verbal only",
+                "Making it fit with a bit of força", "Sweeping it under the pavement",
+                "Adding a cobble that doesn't match", "Saying fica assim mesmo"
             ]
         }
     }
