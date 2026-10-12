@@ -179,6 +179,7 @@ struct SidebarNeedsYouStack: View {
     // The pointer has to settle for this long before the stack opens, so one passing over
     // on its way to the tree does not shove the tree down and back.
     private static let hoverIntent: Duration = .milliseconds(140)
+    private static let resize: Animation = .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.38)
 
     private var fans: Bool { fanned && waiting.count > 1 }
 
@@ -197,8 +198,7 @@ struct SidebarNeedsYouStack: View {
             }
             .frame(height: height, alignment: .top)
             .frame(maxWidth: .infinity)
-            .animation(reduceMotion ? nil : .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.38),
-                       value: height)
+            .animation(reduceMotion ? nil : Self.resize, value: height)
         }
         .padding(.horizontal, 14)
         .padding(.top, 12)
@@ -253,14 +253,21 @@ struct SidebarNeedsYouStack: View {
     private func hover(_ inside: Bool) {
         intent?.cancel()
         guard inside else {
-            fanned = false
+            setFanned(false)
             return
         }
         intent = Task {
             try? await Task.sleep(for: Self.hoverIntent)
             guard !Task.isCancelled else { return }
-            fanned = true
+            setFanned(true)
         }
+    }
+
+    // The animation on the stack's own frame only reaches views inside it. The change has
+    // to be animated where it is made, or the tree under the stack jumps to its new place
+    // while the stack is still growing or shrinking above it.
+    private func setFanned(_ value: Bool) {
+        withAnimation(reduceMotion ? nil : Self.resize) { fanned = value }
     }
 }
 
