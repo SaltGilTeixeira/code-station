@@ -4,15 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Teya Code Station - a headquarters for your coding agents</title>
-<meta name="description" content="A macOS app for running Codex and Claude Code across local projects. Conversation, changes, files, Git, and a terminal in one window.">
+<meta name="description" content="A macOS app for running Claude Code, Codex and GitHub Copilot CLI across local projects. Conversation, changes, files, Git and a terminal in one window.">
 <link rel="canonical" href="https://teya-engineering.github.io/code-station/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Teya Code Station">
-<meta property="og:description" content="Run Codex and Claude Code across every project - conversation, changes, files, and terminal in one window.">
+<meta property="og:description" content="Run Claude Code, Codex and Copilot across every project - conversation, changes, files and terminal in one window.">
 <meta property="og:url" content="https://teya-engineering.github.io/code-station/">
 <meta property="og:image" content="https://teya-engineering.github.io/code-station/assets/og.jpg">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="theme-color" content="#f5f2e8">
+<meta name="theme-color" content="#f5f3ed">
 <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-512.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -21,202 +21,363 @@
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 
-<main>
-
-<section class="band band--light">
-  <header class="masthead" data-reveal="fade">
-    <a class="brand" href="./"><img src="assets/mark.svg" alt="" width="32" height="32">Code Station</a>
-    <nav>
+<div class="topbar" id="topbar">
+  <header class="masthead">
+    <a class="brand" href="./"><img src="assets/mark.svg" alt="" width="30" height="30">Code Station</a>
+    <nav aria-label="Sections">
+      <a href="#whats-new">What's new</a>
       <a href="#features">Features</a>
+      <a href="#design">Design</a>
       <a href="#get-started">Get started</a>
       <a href="https://github.com/teya-engineering/code-station">GitHub</a>
     </nav>
-    <span class="platform">FOR macOS</span>
+    <a class="nav-cta" href="https://github.com/teya-engineering/code-station/releases/latest">Download</a>
   </header>
+</div>
 
+<main id="main">
+
+<section class="band band--light band--hero">
   <div class="pitch">
+    <p class="kicker" data-reveal="fade"><b>New</b>Home, Needs you and phone access</p>
     <h1 data-reveal>Your agents just got<br><em>a headquarters.</em></h1>
-    <p class="reveal--delay-1" data-reveal>Run Codex and Claude Code across every project - conversation, changes, files, and terminal in one window.</p>
+    <p class="reveal--delay-1" data-reveal>Run Claude Code, Codex and Copilot across every project. Conversation, changes, files and a terminal, in one Mac window.</p>
     <div class="actions reveal--delay-2" data-reveal>
-      <a class="btn btn--primary" href="https://github.com/teya-engineering/code-station/releases/latest">Get the latest release</a>
-      <a class="btn btn--ghost" href="https://github.com/teya-engineering/code-station">View source</a>
+      <a class="btn btn--primary" href="https://github.com/teya-engineering/code-station/releases/latest">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10m0 0-4-4m4 4 4-4M4 16h12"/></svg>
+        Download for Mac
+      </a>
+      <div class="brew" data-copy-root>
+        <code>brew install teya-engineering/tap/teya-code-station</code>
+        <button type="button" class="copy" data-copy aria-label="Copy the Homebrew install command">Copy</button>
+      </div>
+    </div>
+    <div class="agents-line reveal--delay-3" data-reveal="fade">
+      <span><i style="--c:#d97757"></i>Claude Code</span>
+      <span><i style="--c:#7aa0d9"></i>Codex</span>
+      <span><i style="--c:#9b7ad9"></i>GitHub Copilot CLI</span>
     </div>
   </div>
 
   <div class="shot-frame shot--wide" data-reveal="shot">
     <img class="shot" data-parallax fetchpriority="high" decoding="async" src="assets/shot-hero.webp" width="2200" height="1344"
-         alt="Code Station with a project sidebar on the left and an agent session open in Chat, showing the prompt, tool calls, and its summary.">
+         alt="Code Station with the sidebar on the left showing a Needs you stack above the projects, and a Claude Code session open in Chat with its prompt, tool calls and answer.">
+  </div>
+</section>
+
+<section class="band band--light band--flat" id="whats-new" style="padding-top: clamp(48px, 6vw, 72px); padding-bottom: clamp(48px, 6vw, 72px); background: var(--cream-deep);">
+  <div class="news">
+    <div class="news-head" data-reveal="fade">
+      <h2>What's new</h2>
+      <p>Shipped since September, all in the latest release.</p>
+    </div>
+    <div class="news-rail">
+      <a class="news-card" href="#home" data-reveal style="--tint: rgba(221,224,72,0.35); --fg: #4d4f10;">
+        <span class="glyph"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10" cy="10" r="2.4"/><circle cx="10" cy="10" r="7"/><circle cx="15" cy="5.2" r="1.4" fill="currentColor"/></svg></span>
+        <strong>Home and the work map</strong><span>Today's sessions around one hub, with a day ribbon.</span>
+      </a>
+      <a class="news-card" href="#needs-you" data-reveal style="--reveal-delay:60ms; --tint: rgba(201,139,30,0.15); --fg: #8a5d10;">
+        <span class="glyph"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M10 3.5a4.5 4.5 0 0 0-4.5 4.5v3l-1.5 2.5h12L14.5 11V8A4.5 4.5 0 0 0 10 3.5Z"/><path d="M8.3 16a1.8 1.8 0 0 0 3.4 0"/></svg></span>
+        <strong>Needs you</strong><span>Waiting sessions rise to the top of the sidebar.</span>
+      </a>
+      <a class="news-card" href="#needs-you" data-reveal style="--reveal-delay:120ms;">
+        <span class="glyph"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M5 3h10v14l-2.5-1.5L10 17l-2.5-1.5L5 17Z"/><path d="M8 7h4M8 10h4"/></svg></span>
+        <strong>Turn receipts</strong><span>What changed, how long it took, and one click to review.</span>
+      </a>
+      <a class="news-card" href="#phone" data-reveal style="--reveal-delay:180ms; --tint: rgba(48,97,153,0.12); --fg: var(--plan);">
+        <span class="glyph"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="5.5" y="2.5" width="9" height="15" rx="2.2"/><path d="M9 14.5h2"/></svg></span>
+        <strong>On your phone</strong><span>Scan a QR code to follow and answer from the couch.</span>
+      </a>
+      <a class="news-card" href="#review" data-reveal style="--reveal-delay:240ms;">
+        <span class="glyph"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5"/><path d="m12.3 12.3 4.2 4.2"/></svg></span>
+        <strong>Find in files</strong><span>Search a project, then rename, move or bin files in place.</span>
+      </a>
+      <a class="news-card" href="#design" data-reveal style="--reveal-delay:300ms; --tint: rgba(92,51,150,0.12); --fg: var(--showcase);">
+        <span class="glyph"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M10 2.5 12 8l5.5 2-5.5 2-2 5.5L8 12l-5.5-2L8 8Z"/></svg></span>
+        <strong>Design ambition</strong><span>Restrained, Balanced or All out for every design.</span>
+      </a>
+    </div>
   </div>
 </section>
 
 <section class="band band--night" id="features">
   <div class="pitch">
-    <h2 data-reveal>Codex and Claude Code.<br><em>No favorites.</em></h2>
-    <p class="reveal--delay-1" data-reveal>Pick the agent, model, and effort per session, then run them in parallel, each in its own Git worktree.</p>
+    <h2 data-reveal>Three agents.<br><em>No favourites.</em></h2>
+    <p class="reveal--delay-1" data-reveal>Pick the agent, model, effort and access for each session from the composer, then run them side by side, each in its own Git worktree. Skills from your marketplaces install for each of them from one list.</p>
   </div>
+
+  <div class="tabs-head" data-reveal>
+    <div class="switch" role="tablist" aria-label="Agent">
+      <button type="button" role="tab" aria-selected="true" aria-controls="agent-panel" data-agent="claude" style="--c:#d97757"><i></i>Claude Code</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="agent-panel" data-agent="codex" style="--c:#7aa0d9"><i></i>Codex</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="agent-panel" data-agent="copilot" style="--c:#9b7ad9"><i></i>Copilot</button>
+    </div>
+  </div>
+  <div class="agent-panel fade-swap" id="agent-panel" role="tabpanel" aria-live="polite" data-reveal>
+    <span class="badge" style="--c:#d97757">CC</span>
+    <div>
+      <h3>Claude Code</h3>
+      <p>Plan first, then build. Rewind to an earlier prompt or fork the conversation into a new session from that point.</p>
+      <ul><li>Plan mode</li><li>Rewind and fork</li><li>Ask only about risky things</li></ul>
+    </div>
+  </div>
+
   <div class="shot-frame shot--wide" data-reveal="shot">
-    <img class="shot" data-parallax loading="lazy" decoding="async" src="assets/shot-agents.webp" width="2200" height="1344"
-         alt="Several projects and sessions in the sidebar, with two sessions running while a Codex agent works through a billing migration.">
+    <img class="shot" data-parallax loading="lazy" decoding="async" src="assets/shot-repertoire.webp" width="2560" height="1600"
+         alt="The Repertoire dialog listing skills from a marketplace, with install state for Claude Code, Codex and Copilot side by side and one update waiting.">
   </div>
 </section>
 
-<section class="band band--light" id="recaps">
+<section class="band band--light band--flat" id="needs-you">
+  <div class="split">
+    <div class="pitch">
+      <h2 data-reveal>Five sessions running.<br><em>Three need you.</em></h2>
+      <p class="reveal--delay-1" data-reveal>Code Station watches every session so you don't have to. Anything waiting on you rises to a Needs you stack at the top of the sidebar, and each finished turn leaves a receipt.</p>
+      <ul class="steps reveal--delay-2" data-reveal>
+        <li><span class="dot" style="--c: var(--amber)"></span><span><strong>A question or a permission</strong> pins the session to the stack until you answer.</span></li>
+        <li><span class="dot" style="--c: var(--green-mid)"></span><span><strong>A finished turn</strong> shows its time, files and line counts, with Review changes one click away.</span></li>
+        <li><span class="dot" style="--c: var(--plan)"></span><span><strong>A plan to approve</strong> waits in blue, because nothing has changed yet.</span></li>
+      </ul>
+    </div>
+
+    <div class="stack" data-reveal="right">
+      <div class="ui-card needs" role="group" aria-label="Needs you, 3 sessions">
+        <div class="needs-head">Needs you <span class="count" id="needs-count">3</span><small>Click to mark as handled</small></div>
+        <button type="button" class="needs-row" aria-pressed="false" style="--a:#e7a2c9; --b:#7a3fb0; --s: var(--amber)">
+          <span class="tile"></span>
+          <span><b>Reconcile weekly payouts</b><em>Ledger Service - wants to run <code style="font-size:11.5px">./gradlew test</code></em></span>
+          <span class="chip chip--amber">Permission</span>
+        </button>
+        <button type="button" class="needs-row" aria-pressed="false" style="--a:#9cc7a1; --b:#2f4a33; --s: var(--plan)">
+          <span class="tile"></span>
+          <span><b>Split payout ledger into daily batches for every merchant region</b><em>Checkout Revamp - 3 projects</em></span>
+          <span class="chip chip--plan">Plan ready</span>
+        </button>
+        <button type="button" class="needs-row" aria-pressed="false" style="--a:#f1c27a; --b:#c0602b; --s: var(--green-mid)">
+          <span class="tile"></span>
+          <span><b>Unify discount codes</b><em>Harbor Web - finished 4 min ago</em></span>
+          <span class="chip chip--green">Review</span>
+        </button>
+      </div>
+
+      <div class="ui-card receipt" aria-label="Turn receipt">
+        <div class="receipt-top">
+          <span class="seal"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7"/></svg></span>
+          <b id="receipt-state">Finished</b><span>in 6m 42s</span>
+          <span style="margin-left:auto"><span class="plus">+184</span> <span class="minus">&minus;37</span></span>
+        </div>
+        <div class="receipt-files">
+          <div><span>src/discounts/codes.ts</span><b class="plus">+96</b><b class="minus">&minus;21</b></div>
+          <div><span>src/discounts/codes.test.ts</span><b class="plus">+74</b><b class="minus">&minus;0</b></div>
+          <div><span>src/checkout/apply-discount.ts</span><b class="plus">+14</b><b class="minus">&minus;16</b></div>
+        </div>
+        <div class="receipt-foot">
+          <span class="warn"><svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M8 2.5 14.5 13.5h-13Z"/><path d="M8 6.5v3.2M8 11.6v.1"/></svg>1 command needs a second look</span>
+          <button type="button" class="btn btn--primary" id="review-btn">Review changes</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band band--night" id="home">
   <div class="pitch">
-    <h2 data-reveal>Come back.<br><em>Caught up.</em></h2>
-    <p class="reveal--delay-1" data-reveal>Ask for a short recap at any time, or turn on automatic recaps for work that finishes while you are elsewhere. The summary stays outside the transcript and keeps only the goal, result or blocker, and next step.</p>
+    <h2 data-reveal>Your whole day.<br><em>On one screen.</em></h2>
+    <p class="reveal--delay-1" data-reveal>Home draws today's work as a map around one hub, with a ribbon of when each project was busy and where the time went. Click anything on it to pick up where it stopped.</p>
   </div>
   <div class="shot-frame shot--wide" data-reveal="shot">
-    <img class="shot" data-parallax loading="lazy" decoding="async" src="assets/shot-recap.webp" width="2200" height="1344"
-         alt="Code Station showing a concise recap above a completed coding-agent session, with controls to refresh or close it.">
+    <img class="shot" data-parallax loading="lazy" decoding="async" src="assets/shot-home.webp" width="2560" height="1504"
+         alt="The Home screen: today's sessions drawn as a work map around a hub that counts two sessions working and two that need you, above a day of activity bars, lines changed today and recent sessions.">
+  </div>
+</section>
+
+<section class="band band--light" id="review">
+  <div class="pitch">
+    <h2 data-reveal>Read every change.<br><em>Before it ships.</em></h2>
+    <p class="reveal--delay-1" data-reveal>Group repositories into a workspace and they share one conversation. The diff, the history and the files sit one tab away, for every repository in it.</p>
+  </div>
+  <div class="tabs-head" data-reveal>
+    <div class="switch" role="tablist" aria-label="Review views">
+      <button type="button" role="tab" aria-selected="true" aria-controls="review-stage" data-view="changes">Changes</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="review-stage" data-view="history">History</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="review-stage" data-view="explorer">Explorer</button>
+    </div>
+    <p class="tab-caption fade-swap" id="review-caption" aria-live="polite" style="color: var(--ink-muted)">Every repository in the workspace in one tree. Step through files with the arrow keys, pick what goes into the commit, amend, then push from the toolbar.</p>
+  </div>
+  <div class="tab-stage" id="review-stage" role="tabpanel">
+    <div class="shot-frame shot--wide">
+      <img class="shot" id="review-shot" loading="lazy" decoding="async" src="assets/shot-changes.webp" width="2200" height="1344"
+           alt="The Changes tab for a three-project workspace, with changed files grouped under each repository, a Kotlin diff open, and Push and Commit in the toolbar.">
+    </div>
   </div>
 </section>
 
 <section class="band band--design" id="design">
   <div class="pitch">
     <h2 data-reveal>Talk it into shape.<br><em>On a live canvas.</em></h2>
-    <p class="reveal--delay-1" data-reveal>Enable the experimental Design mode for a screen, flow, diagram, deck, or prototype. The agent studies the real project, builds beside the conversation, and keeps refining the same interactive artifact.</p>
+    <p class="reveal--delay-1" data-reveal>Ask for a screen, a flow, a deck or a diagram. The agent studies the real project, builds an interactive design, and keeps refining it while the conversation floats over the canvas. Click any element to talk about just that part.</p>
   </div>
-
-  <div class="shot-frame shot--wide" data-reveal="shot">
-    <img class="shot" data-parallax loading="lazy" decoding="async" src="assets/shot-design.webp" width="2560" height="1504"
-         alt="Code Station in Design mode with a conversation beside a live payment journey canvas.">
-  </div>
-</section>
-
-<section class="band band--light">
-  <div class="pitch">
-    <h2 data-reveal>Three repos.<br><em>One conversation.</em></h2>
-    <p class="reveal--delay-1" data-reveal>Group projects into a workspace. The lead is the working directory and the rest join the same conversation.</p>
+  <div class="ambition reveal--delay-2" data-reveal>
+    <div class="switch" role="tablist" aria-label="Design ambition">
+      <button type="button" role="tab" aria-selected="false" data-ambition="restrained" style="--c:#8a8878; --c-ink:#3d3c35"><i></i>Restrained</button>
+      <button type="button" role="tab" aria-selected="true" data-ambition="balanced" style="--c:#3e7a46; --c-ink:#2f4a33"><i></i>Balanced</button>
+      <button type="button" role="tab" aria-selected="false" data-ambition="allOut" style="--c:#b085f7; --c-ink:#5c3396"><i></i>All out</button>
+    </div>
+    <p id="ambition-detail" class="fade-swap" aria-live="polite">Matches the product and finishes every detail.</p>
   </div>
   <div class="shot-frame shot--wide" data-reveal="shot">
-    <img class="shot" data-parallax loading="lazy" decoding="async" src="assets/shot-workspaces.webp" width="2200" height="1344"
-         alt="A workspace screen with a lead project marked as the working directory and two more projects attached to the same conversation.">
+    <img class="shot" data-parallax loading="lazy" decoding="async" src="assets/shot-design.webp" width="2560" height="1600"
+         alt="Code Station in Design mode with a live checkout screen on the canvas, the conversation floating over it, and the Balanced ambition chosen in its composer.">
   </div>
 </section>
 
-<section class="band band--night">
+<section class="band band--light" id="recaps">
   <div class="pitch">
-    <h2 data-reveal>Ship the endpoint.<br><em>Then poke it.</em></h2>
-    <p class="reveal--delay-1" data-reveal>A built-in HTTP client with staging and production environments, OAuth in the Keychain, and <code>{{env}}</code> that resolves itself.</p>
+    <h2 data-reveal>Come back.<br><em>Caught up.</em></h2>
+    <p class="reveal--delay-1" data-reveal>Ask for a short recap at any time, or turn on automatic recaps for work that finishes while you are elsewhere. The recap stays outside the transcript and keeps only the goal, the result or blocker, and the next step.</p>
   </div>
-  <div class="shot-frame shot--mid" data-reveal="shot">
-    <img class="shot" data-parallax loading="lazy" decoding="async" src="assets/shot-dispatch.webp" width="1880" height="1320"
-         alt="The Dispatch screen with a saved GET request against the staging environment and a successful JSON response.">
+  <div class="shot-frame shot--wide" data-reveal="shot">
+    <img class="shot" data-parallax loading="lazy" decoding="async" src="assets/shot-recap.webp" width="2200" height="1344"
+         alt="A session recap card above a finished Codex session, saying what changed, that the tests pass, and the one decision left to make.">
   </div>
 </section>
 
-<section class="band band--light">
-  <div class="pitch">
-    <h2 data-reveal>Bad deploy?<br><em>Send in the agent.</em></h2>
-    <p class="reveal--delay-1" data-reveal>Guided troubleshooting with skills, MCP servers, and read-only guard rails when the environment is live.</p>
-  </div>
-  <div class="shot-frame shot--narrow" data-reveal="shot">
-    <img class="shot" data-parallax loading="lazy" decoding="async" src="assets/shot-troubleshoot.webp" width="1520" height="1360"
-         alt="The Troubleshoot sheet with the problem written out, production selected, two projects chosen, and MCP servers enabled.">
+<section class="band band--light band--flat" id="phone">
+  <div class="phone-row">
+    <div class="pitch">
+      <h2 data-reveal>Step away.<br><em>Stay in the loop.</em></h2>
+      <p class="reveal--delay-1" data-reveal>Scan a QR code and your phone's browser follows along over your local network. Read the turn, answer a question, approve a plan, or start a new session.</p>
+      <div class="scopes reveal--delay-2" role="radiogroup" aria-label="What the code shares" data-reveal>
+        <button type="button" class="scope" role="radio" aria-checked="false" data-scope="session"><span class="radio"></span><span><strong>This session only</strong><span>Lands on one session and stays there.</span></span></button>
+        <button type="button" class="scope" role="radio" aria-checked="true" data-scope="project"><span class="radio"></span><span><strong>This project only</strong><span>Browse its sessions and start new ones.</span></span></button>
+        <button type="button" class="scope" role="radio" aria-checked="false" data-scope="everything"><span class="radio"></span><span><strong>All projects shared</strong><span>The whole app, for as long as you share.</span></span></button>
+      </div>
+      <p class="reveal--delay-3" data-reveal style="font-size:15px">Nothing is reachable until you start sharing, and you can stop at any time.</p>
+    </div>
+
+    <div class="phone" data-reveal="right" aria-label="Code Station on a phone, showing the sessions the code shares">
+      <div class="screen">
+        <div class="screen-top"><small id="phone-scope">Ledger Service</small><h4>Sessions</h4></div>
+        <div class="screen-list">
+          <div class="m-row" data-in="session project everything" style="--s: var(--amber)">
+            <div class="meta"><i>Needs you</i><span>2m</span></div>
+            <b>Reconcile weekly payouts</b>
+            <p>Wants to run ./gradlew test</p>
+            <div class="m-actions"><span>Allow</span><span>Deny</span></div>
+          </div>
+          <div class="m-row" data-in="project everything" style="--s: var(--green-mid)">
+            <div class="meta"><i>Running</i><span>14m</span></div>
+            <b>Split payout ledger</b>
+            <p>Moving payout fees into their own account</p>
+          </div>
+          <div class="m-row" data-in="project everything" style="--s: #a8a8a0">
+            <div class="meta"><i>Idle</i><span>1h</span></div>
+            <b>Record payouts as double entries</b>
+          </div>
+          <div class="m-row" data-in="everything" style="--s: var(--plan)">
+            <div class="meta"><i>Plan ready</i><span>Acorn API</span></div>
+            <b>Filter deliveries</b>
+          </div>
+        </div>
+        <div class="screen-compose">Ask for a change</div>
+      </div>
+    </div>
   </div>
 </section>
 
 <section class="band band--night band--flat">
+  <div class="duo">
+    <div class="duo-item">
+      <h3 data-reveal>Ship the endpoint.<br><em>Then poke it.</em></h3>
+      <p class="reveal--delay-1" data-reveal>Dispatch is a built-in HTTP client with environments, OAuth tokens kept in the Keychain, <code>{{env}}</code> that resolves itself, and JSON responses formatted in colour.</p>
+      <div class="shot-frame" data-reveal="shot">
+        <img class="shot" loading="lazy" decoding="async" src="assets/shot-dispatch.webp" width="2560" height="1600"
+             alt="Dispatch with requests in folders, a GET request with query parameters against Staging, and a coloured JSON response.">
+      </div>
+    </div>
+    <div class="duo-item" style="--reveal-delay: 120ms">
+      <h3 data-reveal>Bad deploy?<br><em>Send in the agent.</em></h3>
+      <p class="reveal--delay-1" data-reveal>Troubleshoot writes a brief from what you saw, picks the projects and MCP servers, and keeps the agent read-only when the environment is live.</p>
+      <div class="shot-frame" data-reveal="shot">
+        <img class="shot" loading="lazy" decoding="async" src="assets/shot-troubleshoot.webp" width="2560" height="1600"
+             alt="The Troubleshoot dialog with the problem and evidence written out, Staging selected, MCP servers on and a project chosen.">
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band band--night band--flat" style="padding-top: 0">
   <div class="pitch">
     <h2 data-reveal>And the rest of<br><em>the window.</em></h2>
     <p class="reveal--delay-1" data-reveal>The parts you reach for between prompts, in the same place as the conversation.</p>
   </div>
-
   <div class="grid">
-    <div class="cell" data-reveal>
-      <h3>Worktree sessions</h3>
-      <p>Run in the project folder when changes should land there, or in an isolated checkout and branch when they should not. Worktree sessions run side by side without touching the same files.</p>
-    </div>
-    <div class="cell" data-reveal>
-      <h3>Review and commit</h3>
-      <p>Pick exactly the files that go into a commit, amend the last one while it is still unpushed, and read recent commits with their full diffs.</p>
-    </div>
-    <div class="cell" data-reveal>
-      <h3>Code that reads as code</h3>
-      <p>Chat code blocks, file previews, and diffs are syntax highlighted, with no extra dependencies.</p>
-    </div>
-    <div class="cell" data-reveal>
-      <h3>Rewind and fork</h3>
-      <p>Take a Claude Code conversation back to an earlier prompt and send it again, or fork it into a new session from that point.</p>
-    </div>
-    <div class="cell" data-reveal>
-      <h3>Cost and context</h3>
-      <p>Every session shows its spend next to the context meter. Any agent's settings can hide the figure.</p>
-    </div>
-    <div class="cell" data-reveal>
-      <h3>Notifications</h3>
-      <p>A system notification when a session finishes a turn or stops to ask something. Clicking it opens that session.</p>
-    </div>
-    <div class="cell" data-reveal>
-      <h3>MCP servers</h3>
-      <p>Configure servers once and register them with Codex, Claude Code, or both. Tag each one with the environment it belongs to.</p>
-    </div>
-    <div class="cell" data-reveal>
-      <h3>Skills</h3>
-      <p>Install and update agent skills from your organisation's marketplace.</p>
-    </div>
-    <div class="cell" data-reveal>
-      <h3>Shortcuts and Docker</h3>
-      <p>Save, run, and stop shell commands from the status row, and inspect or stop running containers without leaving the app.</p>
-    </div>
+    <div class="cell" data-reveal><h3><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M6 3v8a3 3 0 0 0 3 3h5M14 14l-2.5-2.5M14 14l-2.5 2.5"/><circle cx="6" cy="3.5" r="1.5"/></svg>Worktree sessions</h3><p>Work in the project folder when changes should land there, or in an isolated checkout and branch when they should not. New sessions update main first.</p></div>
+    <div class="cell" data-reveal><h3><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5"/><path d="m12.3 12.3 4.2 4.2"/></svg>Find in the chat</h3><p>Press <kbd>Cmd</kbd> <kbd>F</kbd> to search a long conversation, with matches that follow the transcript as it grows.</p></div>
+    <div class="cell" data-reveal><h3><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 10a6 6 0 1 0 2-4.5M4 3v3h3"/></svg>Rewind and fork</h3><p>Take a Claude Code conversation back to an earlier prompt and send it again, or fork it into a new session from that point.</p></div>
+    <div class="cell" data-reveal><h3><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 15h14M5 15V9m4 6V5m4 10v-4"/></svg>Cost and context</h3><p>Every session shows its spend next to the context meter. Any agent's settings can hide the figure.</p></div>
+    <div class="cell" data-reveal><h3><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="4" width="14" height="12" rx="2"/><path d="M6 8l2 2-2 2M10 12h4"/></svg>Shortcuts</h3><p>Save the commands worth having on hand, run and stop them from the composer, and keep saved prompts beside them.</p></div>
+    <div class="cell" data-reveal><h3><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="3" width="6" height="6" rx="1.5"/><rect x="11" y="3" width="6" height="6" rx="1.5"/><rect x="3" y="11" width="6" height="6" rx="1.5"/><rect x="11" y="11" width="6" height="6" rx="1.5"/></svg>Workspaces</h3><p>Group projects into a workspace. The lead is the working directory and the rest join the same conversation, each in its own worktree.</p></div>
+    <div class="cell" data-reveal><h3><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10" cy="10" r="3"/><path d="M10 3v2M10 15v2M3 10h2M15 10h2"/></svg>MCP servers</h3><p>Configure servers once and register them with any agent. Tag each with its environment, and sign in from a terminal when one asks.</p></div>
+    <div class="cell" data-reveal><h3><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M10 3.5a4.5 4.5 0 0 0-4.5 4.5v3l-1.5 2.5h12L14.5 11V8A4.5 4.5 0 0 0 10 3.5Z"/></svg>Notifications</h3><p>A notification when a session finishes a turn or stops to ask. Click it to open that session, or mark a session unread for later.</p></div>
+    <div class="cell" data-reveal><h3><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M10 3v9m0 0-3.5-3.5M10 12l3.5-3.5M4 16h12"/></svg>Updates in place</h3><p>The app checks for new releases while it runs and installs them with one click, refusing any build that is not signed by the team.</p></div>
   </div>
 </section>
 
 <section class="band band--light band--flat" id="get-started">
   <div class="pitch">
     <h2 data-reveal>Install it.<br><em>On your Mac.</em></h2>
-    <p class="reveal--delay-1" data-reveal>Install it with Homebrew, or download the signed and notarized DMG from the latest release on GitHub, drag Teya Code Station to Applications, and launch the app - no toolchain, no build step.</p>
-    <div class="terminal terminal--inline reveal--delay-2" data-reveal>
-      <header>
-        <span class="lights"><i style="background:#e0655b"></i><i style="background:#e0b155"></i><i style="background:#5fb85f"></i></span>
-        Homebrew
-        <button type="button" data-copy>Copy</button>
-      </header>
-<pre><code><span class="sigil">$ </span>brew install teya-engineering/tap/teya-code-station</code></pre>
-    </div>
+    <p class="reveal--delay-1" data-reveal>Install with Homebrew, or download the signed and notarized DMG, drag Teya Code Station to Applications and open it. No toolchain, no build step.</p>
     <div class="actions reveal--delay-2" data-reveal>
-      <a class="btn btn--primary" href="https://github.com/teya-engineering/code-station/releases/latest">View the latest release</a>
+      <a class="btn btn--primary" href="https://github.com/teya-engineering/code-station/releases/latest">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10m0 0-4-4m4 4 4-4M4 16h12"/></svg>
+        Download for Mac
+      </a>
+      <a class="btn btn--ghost" href="https://github.com/teya-engineering/code-station">View source on GitHub</a>
     </div>
   </div>
 
   <div class="wrap columns">
     <div data-reveal="left">
-      <p class="eyebrow">What you need</p>
+      <p class="label">What you need</p>
       <ul class="checklist">
         <li>macOS 15 or later</li>
         <li>At least one agent installed and signed in: <code>claude</code>, <code>codex</code> or <code>copilot</code></li>
+        <li>The app warns you when an agent's CLI is older than it needs</li>
       </ul>
-      <p class="eyebrow" style="margin-top:36px">For contributors</p>
-      <p>Building from source needs Xcode 16 (or another Swift 6 toolchain) and Git. The script makes a double-clickable bundle you can drop in Applications.</p>
     </div>
-
-    <div class="terminal" data-reveal="right">
-      <header>
-        <span class="lights"><i style="background:#e0655b"></i><i style="background:#e0b155"></i><i style="background:#5fb85f"></i></span>
-        build-app.sh
-        <button type="button" data-copy>Copy</button>
-      </header>
+    <div style="display:grid; gap:18px" data-reveal="right">
+      <div class="terminal" data-copy-root>
+        <header><span class="lights"><i style="background:#e0655b"></i><i style="background:#e0b155"></i><i style="background:#5fb85f"></i></span>Homebrew<button type="button" class="copy" data-copy>Copy</button></header>
+<pre><code><span class="sigil">$ </span>brew install teya-engineering/tap/teya-code-station</code></pre>
+      </div>
+      <div class="terminal" data-copy-root>
+        <header><span class="lights"><i style="background:#e0655b"></i><i style="background:#e0b155"></i><i style="background:#5fb85f"></i></span>Build from source<button type="button" class="copy" data-copy>Copy</button></header>
 <pre><code><span class="sigil">$ </span>git clone https://github.com/teya-engineering/code-station.git
 <span class="sigil">$ </span>cd code-station
 <span class="sigil">$ </span>./build-app.sh
 <span class="sigil">$ </span>open "build/Teya Code Station.app"</code></pre>
+      </div>
+      <p style="margin:0; font-size:14.5px; color: var(--ink-muted)">Building needs Xcode 16 or another Swift 6 toolchain, and Git.</p>
     </div>
   </div>
 
   <div class="wrap prose" data-reveal>
     <h3>Make it yours</h3>
-    <p>The parts that belong to your organisation rather than to the app - the identity provider your APIs sign in against, your environments, your Grafana instances, the skills marketplace, the commands worth having on hand - all live in one optional settings file the app reads at startup. Every section is optional, and so is the file.</p>
-    <p>The first-launch wizard can read it from a local file or clone it from a Git repository, and <code>build-app.sh</code> can fold it into the bundle so the app you hand to your team is already set up. See the <a href="https://github.com/teya-engineering/code-station/blob/main/docs/site-configuration.md">site configuration guide</a> and <a href="https://github.com/teya-engineering/code-station/blob/main/site-defaults.example.json">the blank-slate example</a>.</p>
+    <p>The parts that belong to your organisation rather than to the app, like the identity provider your APIs sign in against, your environments, your Grafana instances, skills marketplaces and the commands worth having on hand, live in one optional settings file the app reads at startup. Every section is optional, and so is the file.</p>
+    <p>The first-launch setup can read it from a local file or clone it from a Git repository, and <code>build-app.sh</code> can fold it into the bundle so the app you hand to your team is already set up. See the <a href="https://github.com/teya-engineering/code-station/blob/main/docs/site-configuration.md">site configuration guide</a> and <a href="https://github.com/teya-engineering/code-station/blob/main/site-defaults.example.json">the blank-slate example</a>.</p>
   </div>
 </section>
 
 </main>
 
 <footer class="site-foot">
-  <div class="wrap" data-reveal="fade">
-    <span>Teya Code Station</span>
-    <nav>
+  <div class="wrap">
+    <a class="brand" href="./"><img src="assets/mark.svg" alt="" width="24" height="24">Teya Code Station</a>
+    <nav aria-label="Project links">
+      <a href="https://github.com/teya-engineering/code-station/releases">Releases</a>
       <a href="https://github.com/teya-engineering/code-station">GitHub</a>
       <a href="https://github.com/teya-engineering/code-station/blob/main/CONTRIBUTING.md">Contributing</a>
       <a href="https://github.com/teya-engineering/code-station/blob/main/LICENSE">Licence</a>
@@ -231,17 +392,14 @@
 
   function startRevealAnimations() {
     if (reducedMotion.matches || !('IntersectionObserver' in window)) return;
-
     document.documentElement.classList.add('motion-ready');
     revealObserver = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (!entry.isIntersecting) return;
-
         entry.target.classList.add('is-visible');
         revealObserver.unobserve(entry.target);
       });
     }, { rootMargin: '0px 0px -10% 0px', threshold: 0.08 });
-
     revealElements.forEach((element) => revealObserver.observe(element));
   }
 
@@ -256,17 +414,14 @@
 
   function updateParallax() {
     parallaxFrame = undefined;
-
     if (reducedMotion.matches || window.innerWidth <= 860) {
       parallaxImages.forEach((image) => image.style.removeProperty('--parallax-y'));
       return;
     }
-
     const viewportHeight = window.innerHeight;
     parallaxImages.forEach((image) => {
       const bounds = image.parentElement.getBoundingClientRect();
       if (bounds.bottom < -100 || bounds.top > viewportHeight + 100) return;
-
       const elementCenter = bounds.top + bounds.height / 2;
       const travelRange = (viewportHeight + bounds.height) / 2;
       const progress = Math.max(-1, Math.min(1, (viewportHeight / 2 - elementCenter) / travelRange));
@@ -290,19 +445,132 @@
     requestParallaxUpdate();
   });
 
+  // The bar only takes a background once there is page under it to blur.
+  const topbar = document.getElementById('topbar');
+  const updateTopbar = () => topbar.classList.toggle('is-stuck', window.scrollY > 24);
+  updateTopbar();
+  window.addEventListener('scroll', updateTopbar, { passive: true });
+
+  const navLinks = [...document.querySelectorAll('.masthead nav a[href^="#"]')];
+  const sectionObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      navLinks.forEach((link) => link.setAttribute('aria-current', String(link.hash === '#' + entry.target.id)));
+    });
+  }, { rootMargin: '-45% 0px -50% 0px' });
+  navLinks.forEach((link) => {
+    const target = document.querySelector(link.hash);
+    if (target) sectionObserver.observe(target);
+  });
+
   document.querySelectorAll('[data-copy]').forEach((copyButton) => copyButton.addEventListener('click', async (event) => {
     const button = event.currentTarget;
-    const lines = button.closest('.terminal').querySelector('code').innerText;
+    const text = button.closest('[data-copy-root]').querySelector('code').innerText;
     try {
-      await navigator.clipboard.writeText(lines.replace(/^\$ /gm, ''));
+      await navigator.clipboard.writeText(text.replace(/^\$ /gm, ''));
       button.textContent = 'Copied';
-      setTimeout(() => { button.textContent = 'Copy'; }, 1600);
+      button.classList.add('is-done');
     } catch {
       button.textContent = 'Press Cmd C';
     }
+    setTimeout(() => { button.textContent = 'Copy'; button.classList.remove('is-done'); }, 1600);
   }));
 
-</script>
+  // Swaps a panel's content with a short fade, or at once when motion is reduced.
+  function swap(element, update) {
+    if (reducedMotion.matches) { update(); return; }
+    element.classList.add('is-leaving');
+    setTimeout(() => { update(); element.classList.remove('is-leaving'); }, 180);
+  }
 
+  function wireTabs(selector, onSelect) {
+    const tabs = [...document.querySelectorAll(selector)];
+    tabs.forEach((tab, index) => {
+      tab.addEventListener('click', () => {
+        if (tab.getAttribute('aria-selected') === 'true') return;
+        tabs.forEach((other) => other.setAttribute('aria-selected', String(other === tab)));
+        onSelect(tab);
+      });
+      tab.addEventListener('keydown', (event) => {
+        const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+        if (!step) return;
+        const next = tabs[(index + step + tabs.length) % tabs.length];
+        next.focus();
+        next.click();
+      });
+    });
+  }
+
+  const agents = {
+    claude: { badge: 'CC', color: '#d97757', name: 'Claude Code',
+      text: 'Plan first, then build. Rewind to an earlier prompt or fork the conversation into a new session from that point.',
+      tags: ['Plan mode', 'Rewind and fork', 'Ask only about risky things'] },
+    codex: { badge: 'Cx', color: '#7aa0d9', name: 'Codex',
+      text: 'Choose the model and reasoning effort per session, and how much it may do: sandboxed, sandboxed with auto-approve, or full access.',
+      tags: ['Sandboxed', 'Auto-approve', 'Account limits in Settings'] },
+    copilot: { badge: 'GH', color: '#9b7ad9', name: 'GitHub Copilot CLI',
+      text: 'Copilot sessions persist like the others, in the same sidebar, composer and worktrees, signed in with your own GitHub account.',
+      tags: ['Persistent sessions', 'Your own account', 'Same composer'] },
+  };
+  const agentPanel = document.getElementById('agent-panel');
+  wireTabs('[data-agent]', (tab) => swap(agentPanel, () => {
+    const agent = agents[tab.dataset.agent];
+    agentPanel.querySelector('.badge').textContent = agent.badge;
+    agentPanel.querySelector('.badge').style.setProperty('--c', agent.color);
+    agentPanel.querySelector('h3').textContent = agent.name;
+    agentPanel.querySelector('p').textContent = agent.text;
+    agentPanel.querySelector('ul').innerHTML = agent.tags.map((tag) => `<li>${tag}</li>`).join('');
+  }));
+
+  const views = {
+    changes: { src: 'assets/shot-changes.webp',
+      caption: 'Every repository in the workspace in one tree. Step through files with the arrow keys, pick what goes into the commit, amend, then push from the toolbar.',
+      w: 2200, h: 1344, alt: 'The Changes tab for a three-project workspace, with changed files grouped under each repository, a Kotlin diff open, and Push and Commit in the toolbar.' },
+    history: { src: 'assets/shot-history.webp',
+      caption: 'Commits nested under each project, with every file in a commit and its diff, so a change reads one file at a time.',
+      w: 2560, h: 1504, alt: 'The History tab with commits grouped under each project, one commit open with its changed files and diff, and Push 1 commit in the toolbar.' },
+    explorer: { src: 'assets/shot-explorer.webp',
+      caption: 'Find in files across the project, open a match in the editor, and create, rename, move or bin files without leaving the app.',
+      w: 2200, h: 1344, alt: 'Find in files searching a project for window, with twelve matches in three files and the first match highlighted.' },
+  };
+  const reviewShot = document.getElementById('review-shot');
+  const reviewCaption = document.getElementById('review-caption');
+  wireTabs('[data-view]', (tab) => {
+    const view = views[tab.dataset.view];
+    swap(reviewCaption, () => { reviewCaption.textContent = view.caption; });
+    swap(reviewShot, () => { reviewShot.src = view.src; reviewShot.alt = view.alt; reviewShot.width = view.w; reviewShot.height = view.h; });
+  });
+  Object.values(views).forEach((view) => { const image = new Image(); image.src = view.src; });
+
+  const ambitionDetail = document.getElementById('ambition-detail');
+  const ambitions = {
+    restrained: 'Stays close to the product as it is. Small changes that are easy to build.',
+    balanced: 'Matches the product and finishes every detail.',
+    allOut: 'Showcase quality. Bolder choices and richer motion.',
+  };
+  wireTabs('[data-ambition]', (tab) => swap(ambitionDetail, () => { ambitionDetail.textContent = ambitions[tab.dataset.ambition]; }));
+
+  // The demo stack: marking a row handled is how the real one empties.
+  const needsCount = document.getElementById('needs-count');
+  document.querySelectorAll('.needs-row').forEach((row) => row.addEventListener('click', () => {
+    row.setAttribute('aria-pressed', String(row.getAttribute('aria-pressed') !== 'true'));
+    needsCount.textContent = document.querySelectorAll('.needs-row[aria-pressed="false"]').length;
+  }));
+  const reviewButton = document.getElementById('review-btn');
+  reviewButton.addEventListener('click', () => {
+    const reviewed = !reviewButton.classList.contains('is-reviewed');
+    reviewButton.classList.toggle('is-reviewed', reviewed);
+    reviewButton.textContent = reviewed ? 'View changes' : 'Review changes';
+    document.getElementById('receipt-state').textContent = reviewed ? 'Reviewed' : 'Finished';
+  });
+
+  const scopeNames = { session: 'Reconcile weekly payouts', project: 'Ledger Service', everything: 'All projects' };
+  const scopes = [...document.querySelectorAll('.scope')];
+  scopes.forEach((scope) => scope.addEventListener('click', () => {
+    scopes.forEach((other) => other.setAttribute('aria-checked', String(other === scope)));
+    document.getElementById('phone-scope').textContent = scopeNames[scope.dataset.scope];
+    document.querySelectorAll('.m-row').forEach((row) => row.classList.toggle('is-hidden', !row.dataset.in.split(' ').includes(scope.dataset.scope)));
+  }));
+</script>
 </body>
 </html>
