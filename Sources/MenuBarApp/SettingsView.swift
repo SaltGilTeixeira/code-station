@@ -916,7 +916,7 @@ struct SettingsView: View {
                 .padding(.top, 1)
                 .accessibilityHidden(true)
 
-                Text("Each project's messages take the main colour of its \(Text("sidebar icon").fontWeight(.semibold).foregroundStyle(.primary)), so you can tell which project a session belongs to at a glance. Switching icon style changes them too.")
+                Text("Your messages stay Stone, with a bar in the colour of the project's \(Text("sidebar icon").fontWeight(.semibold).foregroundStyle(.primary)) on the side you write from. Switching icon style changes the bar too.")
             } else {
                 Text("Every session uses \(Text(settings.messageColour.label).fontWeight(.semibold).foregroundStyle(.primary)), whatever the project.")
             }
@@ -1693,7 +1693,8 @@ private struct MessageColourMiniBubble: View {
 
     var body: some View {
         let style = colour.style(projectTint: projectTints.first)
-        fill(style)
+        style.fill
+            .overlay(alignment: .trailing) { edge }
             .overlay(alignment: .topLeading) {
                 VStack(alignment: .leading, spacing: 4) {
                     Capsule().frame(width: 30, height: 3)
@@ -1706,24 +1707,23 @@ private struct MessageColourMiniBubble: View {
             }
             .frame(width: 52, height: 26)
             .clipShape(shape)
-            .overlay(shape.stroke(colour == .projectIcon ? Theme.settingsBorder : style.ring))
+            .overlay(shape.stroke(style.ring))
             .accessibilityHidden(true)
     }
 
     @Environment(\.colorScheme) private var scheme
     private var inverted: ColorScheme { scheme == .dark ? .light : .dark }
 
-    // Project icon has no one colour, so its sample is striped with the colours the
+    // Project icon has no one colour, so its bar is split between the colours the
     // sample projects would get.
-    @ViewBuilder private func fill(_ style: UserMessageStyle) -> some View {
+    @ViewBuilder private var edge: some View {
         if colour == .projectIcon {
-            HStack(spacing: 0) {
+            VStack(spacing: 0) {
                 ForEach(Array(projectTints.enumerated()), id: \.offset) { _, tint in
-                    UserMessageStyle.tinted(tint.colour).fill
+                    UserMessageStyle.tinted(tint.colour).edge
                 }
             }
-        } else {
-            style.fill
+            .frame(width: 3.5)
         }
     }
 }

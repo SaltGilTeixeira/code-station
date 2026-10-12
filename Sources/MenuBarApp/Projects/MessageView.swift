@@ -43,11 +43,11 @@ struct MessageView: View, Equatable {
         case .user:
             if let promptMenu {
                 userBubble
-                    .transcriptCopyButton(for: message.text)
+                    .transcriptCopyButton(for: message.text, inset: userBubbleCopyInset)
                     .appContextMenu(promptMenu)
             } else {
                 userBubble
-                    .transcriptCopyButton(for: message.text)
+                    .transcriptCopyButton(for: message.text, inset: userBubbleCopyInset)
             }
         case .assistant:
             assistantBody
@@ -89,13 +89,25 @@ struct MessageView: View, Equatable {
             }
             .environment(\.colorScheme, bubble.inverts ? colorScheme.inverted : colorScheme)
             .padding(.leading, 15)
-            .padding(.trailing, message.text.isEmpty ? 15 : 42)
+            .padding(.trailing, userBubbleTrailingPadding)
             .padding(.vertical, 11)
             // The corner nearest the writer is squared off, so the bubble points back at
             // the side of the page it came from.
             .background(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12,
                                                bottomTrailingRadius: 4, topTrailingRadius: 12)
                 .fill(bubble.fill))
+            // Clipped by the bubble, so the bar follows its rounded top corner and its
+            // squared bottom one.
+            .overlay(alignment: .trailing) {
+                if let edge = bubble.edge {
+                    UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12,
+                                           bottomTrailingRadius: 4, topTrailingRadius: 12)
+                        .fill(edge)
+                        .mask(alignment: .trailing) {
+                            Rectangle().frame(width: Self.edgeWidth)
+                        }
+                }
+            }
             .overlay(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12,
                                             bottomTrailingRadius: 4, topTrailingRadius: 12)
                 .stroke(bubble.ring))
@@ -113,6 +125,18 @@ struct MessageView: View, Equatable {
         .environment(\.openURL, transcriptOpenURL)
     }
 
+    private static let edgeWidth: CGFloat = 4
+
+    // The text and the copy button keep clear of the project's bar.
+    private var userBubbleTrailingPadding: CGFloat {
+        let edge = bubble.edge == nil ? 0 : Self.edgeWidth
+        return (message.text.isEmpty ? 15 : 42) + edge
+    }
+
+    private var userBubbleCopyInset: CGFloat {
+        bubble.edge == nil ? 4 : 4 + Self.edgeWidth
+    }
+
     private var userBubbleLeadingSpace: CGFloat {
         availableWidth == nil ? 80 : 16
     }
@@ -124,7 +148,7 @@ struct MessageView: View, Equatable {
     }
 
     private var userBubbleContentWidth: CGFloat {
-        let horizontalPadding: CGFloat = message.text.isEmpty ? 30 : 57
+        let horizontalPadding = 15 + userBubbleTrailingPadding
         return max(0, userBubbleWidth - horizontalPadding)
     }
 

@@ -37,10 +37,9 @@ struct MessageColourTests {
     }
 
     @Test func bodyTextReadsOnEveryColourInBothAppearances() throws {
-        let tinted = sampleTints().map { UserMessageStyle.tinted($0) }
         let fixed: [UserMessageStyle] = [.stone, .paper, .lemon, .leaf, .ink]
         for appearance in try appearances() {
-            for (index, style) in (fixed + tinted).enumerated() {
+            for (index, style) in fixed.enumerated() {
                 let fill = try swatch(style.fill, in: appearance)
                 let textAppearance = style.inverts ? try inverted(appearance) : appearance
                 let text = try swatch(Color(nsColor: .labelColor), in: textAppearance).over(fill)
@@ -50,15 +49,35 @@ struct MessageColourTests {
         }
     }
 
+    // The project's colour only marks the edge. The bubble behind the text is Stone, so
+    // it reads the same in every project, and the arrival ring is Stone's too.
+    @Test func aProjectBubbleIsStoneWithAnEdge() {
+        for tint in sampleTints() {
+            let style = UserMessageStyle.tinted(tint)
+            #expect(style.fill == UserMessageStyle.stone.fill)
+            #expect(style.ring == UserMessageStyle.stone.ring)
+            #expect(!style.inverts)
+            #expect(style.edge != nil)
+        }
+    }
+
+    @Test func onlyProjectIconDrawsAnEdge() {
+        let tint = Theme.projectTint(for: "orbit-api")
+        for colour in MessageColour.allCases {
+            #expect((colour.style(projectTint: tint).edge != nil) == (colour == .projectIcon))
+        }
+        #expect(MessageColour.projectIcon.style(projectTint: nil).edge == nil)
+    }
+
     // With Project icon on, two sessions from different projects have to be told apart by
-    // the bubble alone.
-    @Test func everyProjectColourGivesItsOwnBubble() throws {
+    // the bar alone.
+    @Test func everyProjectColourGivesItsOwnEdge() throws {
         let wheel = projectWheel()
         #expect(wheel.count == 12)
         for appearance in try appearances() {
-            let fills = try wheel.map { try swatch(UserMessageStyle.tinted($0).fill, in: appearance) }
-            for (i, a) in fills.enumerated() {
-                for b in fills[(i + 1)...] {
+            let edges = try wheel.map { try edgeSwatch($0, in: appearance) }
+            for (i, a) in edges.enumerated() {
+                for b in edges[(i + 1)...] {
                     let gap = max(abs(a.red - b.red), abs(a.green - b.green), abs(a.blue - b.blue))
                     #expect(gap > 0.01, "\(appearance.name.rawValue)")
                 }
@@ -66,29 +85,32 @@ struct MessageColourTests {
         }
     }
 
-    // Near-black Planets grounds and pale Stripes ones used to give a grey bubble. Every
-    // icon in every style has to show its project's colour, in both appearances.
-    @Test func everySidebarIconGivesAColourfulBubble() throws {
+    // Near-black Planets grounds, pale Stripes ones and yellow icons all have to give a
+    // bar that is plainly coloured and stands out from the Stone bubble.
+    @Test func everySidebarIconGivesAClearlyVisibleEdge() throws {
         let tints = sampleTints() + everyArtworkTint().map(\.tint)
         for appearance in try appearances() {
+            let stone = try swatch(UserMessageStyle.stone.fill, in: appearance)
             for (index, tint) in tints.enumerated() {
-                let fill = try swatch(UserMessageStyle.tinted(tint).fill, in: appearance)
-                let chroma = OKLCH(red: fill.red, green: fill.green, blue: fill.blue).chroma
-                #expect(chroma >= 0.02, "tint \(index) on \(appearance.name.rawValue)")
+                let edge = try edgeSwatch(tint, in: appearance)
+                let chroma = OKLCH(red: edge.red, green: edge.green, blue: edge.blue).chroma
+                #expect(chroma >= 0.08, "tint \(index) on \(appearance.name.rawValue)")
+                #expect(edge.contrast(against: stone) >= 2,
+                        "tint \(index) on \(appearance.name.rawValue)")
             }
         }
     }
 
-    // The bubble is only worth having if it reads as the icon in the sidebar, including
+    // The bar is only worth having if it reads as the icon in the sidebar, including
     // the styles drawn in several colours with no one background.
-    @Test func theBubbleSharesItsHueWithTheSidebarIcon() throws {
+    @Test func theEdgeSharesItsHueWithTheSidebarIcon() throws {
         for (style, tint) in everyArtworkTint() {
             let icon = try #require(OKLCH(NSColor(tint)))
             guard icon.chroma >= 0.02 else { continue }
             for appearance in try appearances() {
-                let fill = try swatch(UserMessageStyle.tinted(tint).fill, in: appearance)
-                let bubble = OKLCH(red: fill.red, green: fill.green, blue: fill.blue)
-                let gap = abs(bubble.hue - icon.hue)
+                let edge = try edgeSwatch(tint, in: appearance)
+                let bar = OKLCH(red: edge.red, green: edge.green, blue: edge.blue)
+                let gap = abs(bar.hue - icon.hue)
                 #expect(min(gap, 360 - gap) < 12, "\(style.label) on \(appearance.name.rawValue)")
             }
         }
@@ -105,6 +127,10 @@ struct MessageColourTests {
                 #expect(colour.chroma >= 0.04, "\(style.label) \(index)")
             }
         }
+    }
+
+    private func edgeSwatch(_ tint: Color, in appearance: NSAppearance) throws -> Swatch {
+        try swatch(try #require(UserMessageStyle.tinted(tint).edge), in: appearance)
     }
 
     private func inverted(_ appearance: NSAppearance) throws -> NSAppearance {
