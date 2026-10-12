@@ -48,19 +48,17 @@ struct DesignView: View {
                 // so the panel starts as a small tab instead of covering it.
                 // With nothing on the canvas yet, the conversation is all there is to show,
                 // so it fills the pane.
-                designEmpty = DesignArtifactRevision.read(directory) == nil
+                canvas.refresh(directory)
+                designEmpty = canvas.screenURL(in: directory) == nil
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
-                if designEmpty {
-                    withTransaction(transaction) { conversationExpanded = true }
-                    composerFocused = true
-                } else {
-                    withTransaction(transaction) { conversationMinimized = true }
+                withTransaction(transaction) {
+                    conversationExpanded = designEmpty
+                    conversationMinimized = !designEmpty
                 }
+                composerFocused = designEmpty
             }
-            // The canvas starts unread, so only a change against what was on disk when the
-            // pane opened counts: the first design folds the panel to make room for it.
-            .onChange(of: canvas.revision == nil) { _, empty in
+            .onChange(of: canvas.revision == nil || canvas.screenURL(in: directory) == nil) { _, empty in
                 guard empty != designEmpty else { return }
                 designEmpty = empty
                 conversationMinimized = false
@@ -936,18 +934,22 @@ final class DesignCanvas {
 
     func reload() { reloadGeneration += 1 }
 
+    func refresh(_ directory: URL) {
+        let next = DesignArtifactRevision.read(directory)
+        if next != revision { revision = next }
+        let nextManifest = DesignManifest.read(from: directory)
+        if nextManifest != manifest {
+            manifest = nextManifest
+            if !manifest.screens.contains(where: { $0.id == selectedScreenID }) {
+                selectedScreenID = manifest.screens.first?.id ?? DesignScreen.canvas.id
+            }
+        }
+    }
+
     // Runs until it is cancelled, so it belongs in a task keyed on the directory.
     func watch(_ directory: URL) async {
         while !Task.isCancelled {
-            let next = DesignArtifactRevision.read(directory)
-            if next != revision { revision = next }
-            let nextManifest = DesignManifest.read(from: directory)
-            if nextManifest != manifest {
-                manifest = nextManifest
-                if !manifest.screens.contains(where: { $0.id == selectedScreenID }) {
-                    selectedScreenID = manifest.screens.first?.id ?? DesignScreen.canvas.id
-                }
-            }
+            refresh(directory)
             do {
                 try await Task.sleep(for: .milliseconds(400))
             } catch {

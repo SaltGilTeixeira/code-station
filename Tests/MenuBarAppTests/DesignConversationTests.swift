@@ -265,11 +265,18 @@ struct DesignConversationViewTests {
         }
     }
 
-    @Test func anEmptyDesignKeepsTheConversationOpenUntilTheFirstDesignArrives() async throws {
+    @Test(arguments: [false, true])
+    func anEmptyDesignKeepsTheConversationOpenUntilTheFirstDesignArrives(hasNotes: Bool) async throws {
         let (store, scratch) = TestStore.make()
         let project = try TestStore.project(in: store)
         let session = store.newSession(in: project.id, seed: .init(agent: .codex, mode: .design))
         let artifact = try #require(store.designArtifactURL(for: session))
+        let directory = artifact.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if hasNotes {
+            try "Design notes".write(to: directory.appendingPathComponent("handoff.md"),
+                                     atomically: true, encoding: .utf8)
+        }
         let runner = SessionRunner(paths: [.codex: "/usr/bin/true"])
         let preferences = try #require(UserDefaults(suiteName: "design-empty-\(UUID().uuidString)"))
         let hosting = NSHostingController(rootView:
@@ -317,13 +324,30 @@ struct DesignConversationViewTests {
         try await settle()
         #expect(observer.expanded)
 
-        try FileManager.default.createDirectory(at: artifact.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "body { color: black; }".write(to: directory.appendingPathComponent("style.css"),
+                                           atomically: true, encoding: .utf8)
+        let screen = hasNotes ? directory.appendingPathComponent("home.html") : artifact
+        try """
+            {"screens":[{"id":"home","title":"Home","path":"\(screen.lastPathComponent)"}]}
+            """.write(to: directory.appendingPathComponent("design.json"),
+                      atomically: true, encoding: .utf8)
+        try await settle()
+        #expect(observer.expanded)
+        #expect(!observer.minimized)
+        #expect(!observer.enabled)
+
         try "<!doctype html><html><body><h1>First design</h1></body></html>"
-            .write(to: artifact, atomically: true, encoding: .utf8)
+            .write(to: screen, atomically: true, encoding: .utf8)
         try await settle()
         #expect(!observer.expanded)
         #expect(!observer.minimized)
         #expect(observer.enabled)
+
+        try FileManager.default.removeItem(at: screen)
+        try await settle()
+        #expect(observer.expanded)
+        #expect(!observer.minimized)
+        #expect(!observer.enabled)
     }
 
     // Starting a turn swaps the empty canvas for a "Building" one. The panel over it has to
