@@ -43,21 +43,6 @@ struct RibbonEntranceTests {
         #expect(!RibbonEntrance.isDeserved(by: day))
     }
 
-    @Test func playsOnlyOnTheFirstVisitOfADay() throws {
-        let suite = "ribbon-entrance-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
-        let morning = now.addingTimeInterval(9 * 3_600)
-
-        #expect(RibbonEntrance.claimToday(now: morning, calendar: calendar, in: defaults))
-        #expect(!RibbonEntrance.claimToday(now: morning.addingTimeInterval(8 * 3_600),
-                                           calendar: calendar, in: defaults))
-        #expect(RibbonEntrance.claimToday(now: morning.addingTimeInterval(24 * 3_600),
-                                          calendar: calendar, in: defaults))
-    }
-
     // MARK: - Timing
 
     @Test func runsForAboutThreeSeconds() {

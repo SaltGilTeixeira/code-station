@@ -1,6 +1,6 @@
 import Foundation
 
-// The one-off entrance the day ribbon plays the first time Home opens on a full day.
+// The entrance the day ribbon plays each time Home opens on a full day.
 // The total rolls up over the dimmed chart and flies into the headline. Under it the
 // bars rise from the centre in their project colours, hold a beat, then drain from the
 // top into the accent green, which is how the chart looks at rest.
@@ -42,19 +42,6 @@ struct RibbonEntrance {
         guard ribbon.spent >= minimumSpent else { return false }
         let filled = ribbon.activity(bucketCount: slots).filter { $0.spent > 0 }.count
         return filled >= minimumSlots
-    }
-
-    // Only the first Home visit of a calendar day gets to choose, so reopening Home later
-    // that day finds the chart at rest. Answers true once a day, and marks the day taken.
-    static func claimToday(now: Date = Date(),
-                           calendar: Calendar = .current,
-                           in store: UserDefaults = .standard) -> Bool {
-        if let last = Preferences.dayRibbonEntranceDay(in: store),
-           calendar.isDate(last, inSameDayAs: now) {
-            return false
-        }
-        Preferences.setDayRibbonEntranceDay(now, in: store)
-        return true
     }
 
     // MARK: - Timing

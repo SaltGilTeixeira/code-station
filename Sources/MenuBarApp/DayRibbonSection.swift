@@ -73,13 +73,13 @@ struct DayRibbonSection: View {
             content(moment(at: context.date))
         }
         .background(FrameAnchorView(anchor: sectionAnchor))
-        .onAppear { begin(arriving: true) }
-        .onChange(of: scanned) { begin(arriving: false) }
+        .onAppear { begin() }
+        .onChange(of: scanned) { begin() }
         .onDisappear {
             pendingShow?.cancel()
             pendingHide?.cancel()
             settling?.cancel()
-            entrance = .settled
+            entrance = .waiting
             tooltips.hide(owner: cardOwner, immediately: true)
         }
     }
@@ -166,21 +166,17 @@ struct DayRibbonSection: View {
         }
     }
 
-    // The chart makes its entrance once the scan lands. A full day plays the whole
-    // entrance the first time Home opens that day; anything else fades in, and a chart
-    // that was already read when Home opened later that day is simply there.
-    private func begin(arriving: Bool) {
+    // The chart makes its entrance once the scan lands, every time Home opens. A full
+    // day plays the whole entrance; anything else fades in.
+    private func begin() {
         guard case .waiting = entrance, scanned else { return }
-        let firstToday = RibbonEntrance.claimToday()
-        if firstToday && !reduceMotion && RibbonEntrance.isDeserved(by: ribbon) {
+        if !reduceMotion && RibbonEntrance.isDeserved(by: ribbon) {
             let play = RibbonEntrance(total: DayRibbon.duration(ribbon.spent))
             entrance = .playing(play, since: Date())
             settle(after: play.duration)
-        } else if firstToday || !arriving {
+        } else {
             entrance = .fading(since: Date())
             settle(after: Self.fade)
-        } else {
-            entrance = .settled
         }
     }
 
