@@ -45,6 +45,9 @@ struct UserMessageStyle: Equatable {
     // Ink is dark on a light page and light on a dark one, so what sits inside it is drawn
     // in the other appearance. That flips the AppKit text views too, not just SwiftUI text.
     var inverts = false
+    // A bar down the writer's side in the project's colour. The bubble itself stays
+    // Stone, since a whole bubble washed in the colour looked muddy on the page.
+    var edge: Color?
 
     static let stone = UserMessageStyle(
         fill: Theme.adaptive(light: srgb(0.918, 0.902, 0.859), dark: srgb(0.153, 0.149, 0.137)),
@@ -65,24 +68,25 @@ struct UserMessageStyle: Equatable {
         ring: .clear,
         inverts: true)
 
-    // Only the hue comes from the project colour. Lightness and chroma are fixed, so a
-    // near-black Planets icon and a pastel Stripes one give bubbles of the same strength,
-    // and none of them washes out to grey.
+    // Stone with the project's colour as an edge.
     // Built once per colour: the transcript compares styles to decide what to redraw, and
     // a fresh dynamic colour never equals the last one.
     @MainActor
     static func tinted(_ colour: Color) -> UserMessageStyle {
         if let style = tintedCache[colour] { return style }
-        let hue = OKLCH(NSColor(colour))?.hue ?? 0
-        let style = UserMessageStyle(
-            fill: Theme.adaptive(
-                light: OKLCH(lightness: 0.925, chroma: 0.05, hue: hue).nsColor(),
-                dark: OKLCH(lightness: 0.30, chroma: 0.05, hue: hue).nsColor()),
-            ring: Theme.adaptive(
-                light: OKLCH(lightness: 0.72, chroma: 0.10, hue: hue).nsColor(alpha: 0.5),
-                dark: OKLCH(lightness: 0.58, chroma: 0.10, hue: hue).nsColor(alpha: 0.5)))
+        let style = UserMessageStyle(fill: stone.fill, ring: stone.ring, edge: edgeColour(colour))
         tintedCache[colour] = style
         return style
+    }
+
+    // Only the hue comes from the project colour. Lightness and chroma are fixed, so a
+    // near-black Planets icon and a pastel Stripes one give bars of the same strength,
+    // and none of them washes out to grey.
+    static func edgeColour(_ colour: Color) -> Color {
+        let hue = OKLCH(NSColor(colour))?.hue ?? 0
+        return Theme.adaptive(
+            light: OKLCH(lightness: 0.60, chroma: 0.14, hue: hue).nsColor(),
+            dark: OKLCH(lightness: 0.72, chroma: 0.13, hue: hue).nsColor())
     }
 
     @MainActor private static var tintedCache: [Color: UserMessageStyle] = [:]
