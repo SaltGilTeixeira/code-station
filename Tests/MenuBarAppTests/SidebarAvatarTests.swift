@@ -85,6 +85,7 @@ struct SidebarAvatarTests {
         let avatar = SidebarAvatar(subject: .project, id: UUID(), artworkIndex: 1)
         let monogramTint = Theme.projectTint(for: "Payments")
         let artworkColour = try #require(avatar.primaryColour(style: .blobs))
+        let multiColourArtworkHue = try #require(avatar.primaryColour(style: .shapes))
 
         let monogram = avatar.identityTint(
             iconSet: .monograms,
@@ -103,7 +104,7 @@ struct SidebarAvatarTests {
             monogramTint: monogramTint)
 
         #expect(monogram.colour == monogramTint.colour)
-        #expect(multiColourArtwork.colour == monogramTint.colour)
+        #expect(multiColourArtwork.colour == multiColourArtworkHue)
         #expect(singleColourArtwork.colour == artworkColour)
     }
 
@@ -136,7 +137,7 @@ struct SidebarAvatarTests {
                     let svg = try String(contentsOf: url, encoding: .utf8)
                     #expect(svg.hasPrefix("<svg"))
                     #expect((style.primaryColour(in: svg) != nil)
-                        == style.usesArtworkPrimaryColour)
+                        == style.hasPrimaryColourBackground)
                 }
             }
         }

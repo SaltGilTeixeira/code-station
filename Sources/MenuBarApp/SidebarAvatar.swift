@@ -63,12 +63,16 @@ struct SidebarAvatar: Equatable, Sendable {
         SidebarAvatarArt.artwork(for: self, style: style)?.primaryColour
     }
 
+    // Every artwork style gives its own colour, so the rail, the home view and a
+    // person's messages all agree with the icon. Styles drawn in several colours over a
+    // pale ground give the hue most of the tile is drawn in.
     @MainActor
     func identityTint(iconSet: SidebarIconSet, style: DiceBearAvatarStyle,
                       name: String, monogramTint: Theme.ProjectTint) -> Theme.ProjectTint {
         guard iconSet == .diceBear else { return monogramTint }
-        guard style.usesArtworkPrimaryColour else { return Theme.projectTint(for: name) }
-        guard let colour = primaryColour(style: style) else { return monogramTint }
+        guard let colour = primaryColour(style: style) else {
+            return style.hasPrimaryColourBackground ? monogramTint : Theme.projectTint(for: name)
+        }
         return Theme.ProjectTint(colour: colour, ink: colour)
     }
 
@@ -261,16 +265,65 @@ struct SidebarAvatarPrimaryColour: Equatable, Sendable {
     }
 }
 
+// Shapes, Landscape and Weave are drawn in several colours over a pale ground. Their main
+// hue is the one that covers the most of the drawn tile, counting only pixels colourful
+// enough to have a hue at all.
+enum SidebarAvatarMainHue {
+    static func colour(in image: NSImage) -> Color? {
+        let side = 32
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)?
+            .retagging(with: .sRGB),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+            return nil
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        image.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+
+        let binCount = 24
+        var area = [Int](repeating: 0, count: binCount)
+        var hues = [[OKLCH]](repeating: [], count: binCount)
+        for x in 0..<side {
+            for y in 0..<side {
+                guard let pixel = bitmap.colorAt(x: x, y: y), pixel.alphaComponent > 0.5,
+                      let colour = OKLCH(pixel), colour.chroma >= 0.04 else { continue }
+                let bin = Int(colour.hue / 360 * Double(binCount)) % binCount
+                area[bin] += 1
+                hues[bin].append(colour)
+            }
+        }
+        guard let main = area.indices.max(by: { area[$0] < area[$1] }), area[main] > 0 else {
+            return nil
+        }
+        // Averaging on the a and b axes rather than the hue angle keeps a bin that
+        // straddles 0 degrees from averaging out to the opposite side of the wheel.
+        let pixels = hues[main]
+        let okA = pixels.map { $0.chroma * cos($0.hue * .pi / 180) }.reduce(0, +)
+        let okB = pixels.map { $0.chroma * sin($0.hue * .pi / 180) }.reduce(0, +)
+        let count = Double(pixels.count)
+        let average = OKLCH(
+            lightness: pixels.map(\.lightness).reduce(0, +) / count,
+            chroma: hypot(okA, okB) / count,
+            hue: (atan2(okB, okA) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360))
+        return Color(nsColor: average.nsColor())
+    }
+}
+
 extension DiceBearAvatarStyle {
     func usesWebAnimation(for motion: SidebarIconMotion) -> Bool {
         motion == .animated && supportsAnimation
     }
 
     func primaryColour(in svg: String) -> SidebarAvatarPrimaryColour? {
-        guard usesArtworkPrimaryColour else { return nil }
+        guard hasPrimaryColourBackground else { return nil }
         // These styles put their identity colour on the full-bleed background. Shapes
         // and Landscape use several peers, so neither has one colour to claim as primary,
         // and Weave keeps its colour in the bands over a background too pale to tint with.
+        // Those three are read from the drawn tile instead (see SidebarAvatarMainHue).
         return SidebarAvatarPrimaryColour(svg: svg)
     }
 }
@@ -287,11 +340,14 @@ private enum SidebarAvatarArt {
         guard let source = try? String(contentsOf: url, encoding: .utf8) else {
             return nil
         }
+        let image = DiceBearAvatarDocument.stillImage(source: source)
         let artwork = SidebarAvatarArtwork(
             key: key,
             source: source,
-            image: DiceBearAvatarDocument.stillImage(source: source),
-            primaryColour: style.primaryColour(in: source)?.colour)
+            image: image,
+            primaryColour: style.hasPrimaryColourBackground
+                ? style.primaryColour(in: source)?.colour
+                : image.flatMap(SidebarAvatarMainHue.colour(in:)))
         cache[key] = artwork
         return artwork
     }

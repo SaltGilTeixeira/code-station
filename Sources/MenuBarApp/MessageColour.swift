@@ -65,20 +65,22 @@ struct UserMessageStyle: Equatable {
         ring: .clear,
         inverts: true)
 
-    // A project colour laid over the canvas at low strength, the way a sidebar tile sits
-    // behind its glyph. Dark mode needs more of the colour to stand off the canvas.
+    // Only the hue comes from the project colour. Lightness and chroma are fixed, so a
+    // near-black Planets icon and a pastel Stripes one give bubbles of the same strength,
+    // and none of them washes out to grey.
     // Built once per colour: the transcript compares styles to decide what to redraw, and
     // a fresh dynamic colour never equals the last one.
     @MainActor
     static func tinted(_ colour: Color) -> UserMessageStyle {
         if let style = tintedCache[colour] { return style }
-        let base = NSColor(colour).usingColorSpace(.sRGB) ?? .gray
+        let hue = OKLCH(NSColor(colour))?.hue ?? 0
         let style = UserMessageStyle(
             fill: Theme.adaptive(
-                light: Theme.canvasLightNSColor.blended(withFraction: 0.13, of: base) ?? base,
-                dark: Theme.canvasDarkNSColor.blended(withFraction: 0.26, of: base) ?? base),
-            ring: Theme.adaptive(light: base.withAlphaComponent(0.28),
-                                 dark: base.withAlphaComponent(0.34)))
+                light: OKLCH(lightness: 0.925, chroma: 0.05, hue: hue).nsColor(),
+                dark: OKLCH(lightness: 0.30, chroma: 0.05, hue: hue).nsColor()),
+            ring: Theme.adaptive(
+                light: OKLCH(lightness: 0.72, chroma: 0.10, hue: hue).nsColor(alpha: 0.5),
+                dark: OKLCH(lightness: 0.58, chroma: 0.10, hue: hue).nsColor(alpha: 0.5)))
         tintedCache[colour] = style
         return style
     }

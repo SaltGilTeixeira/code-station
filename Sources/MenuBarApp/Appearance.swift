@@ -81,7 +81,7 @@ enum DiceBearAvatarStyle: String, CaseIterable, Identifiable {
         }
     }
 
-    var usesArtworkPrimaryColour: Bool {
+    var hasPrimaryColourBackground: Bool {
         switch self {
         case .shapes, .landscape, .weave: false
         default: true
