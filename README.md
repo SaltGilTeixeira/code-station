@@ -23,3 +23,7 @@ the same mark from `Resources/AppIcon.icns` for the Apple touch icon.
 
 The Design capture includes a local interactive artifact rendered on the live
 canvas, so it shows both the current app shell and the output it is built to refine.
+
+The Needs you stack, the turn receipt and the phone are drawn in HTML from the app's
+own components rather than captured, so they stay interactive and sharp at any size.
+`assets/og.jpg` is the social card, made from the hero capture.
