@@ -161,14 +161,15 @@ struct SessionRunSettingsControls: View {
             .appMenu(edge: .top) {
                 var entries: [MenuEntry] = [
                     .item("Use Code Station default (\(appDefault.title))",
-                          icon: "paintbrush.pointed", checked: override == nil) {
+                          icon: "paintbrush.pointed", iconTint: appDefault.tint,
+                          checked: override == nil) {
                         changeSettings { $0.designAmbition = nil }
                     },
                     .separator,
                 ]
                 entries += DesignAmbition.allCases.map { ambition in
                     MenuEntry.item(ambition.title, icon: "paintbrush.pointed",
-                                   iconTint: ambition == .allOut ? Theme.accent : nil,
+                                   iconTint: ambition.tint,
                                    checked: override == ambition,
                                    subtitle: ambition.detail) {
                         changeSettings { $0.designAmbition = ambition.rawValue }
@@ -400,25 +401,58 @@ private struct EffortPill: View {
 
 // MARK: - Design ambition
 
-// All out takes the accent, as a loosened shield takes amber, so a session set to go big
+// Each level has its own colour, quiet to loud like the shield: Restrained stays plain,
+// Balanced takes the house green, and All out turns violet, so a session set to go big
 // shows it at a glance.
+extension DesignAmbition {
+    var tint: Color {
+        switch self {
+        case .restrained: Color(nsColor: .secondaryLabelColor)
+        case .balanced: Theme.accent
+        case .allOut: Theme.showcase
+        }
+    }
+
+    var pillFill: Color {
+        switch self {
+        case .restrained: Theme.field
+        case .balanced: Theme.accent.opacity(0.14)
+        case .allOut: Theme.showcase.opacity(0.14)
+        }
+    }
+
+    // The words on the pill. A plain pill keeps them in the body colour, since grey text
+    // would read as a control that is switched off.
+    var pillInk: Color {
+        self == .restrained ? Color(nsColor: .labelColor) : tint
+    }
+}
+
 private struct AmbitionPill: View {
     let ambition: DesignAmbition
 
     // The level as it was before this change, so the word rolls up as the ambition rises
     // and down as it falls.
     @State private var previous: DesignAmbition?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let bold = ambition == .allOut
-        BarPill(fill: bold ? Theme.accent.opacity(0.14) : Theme.field) {
+        BarPill(fill: ambition.pillFill) {
             HStack(spacing: 6) {
                 Image(systemName: "paintbrush.pointed")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(bold ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(ambition.tint)
+                    // On the glyph rather than the pill, for the same reason as the shield.
+                    .keyframeAnimator(initialValue: 1.0, trigger: reduceMotion ? nil : ambition) { glyph, scale in
+                        glyph.scaleEffect(scale)
+                    } keyframes: { _ in
+                        SpringKeyframe(1.25, duration: 0.15)
+                        SpringKeyframe(1.0, duration: 0.23, spring: .bouncy)
+                    }
                 RollingText(ambition.title, rising: rank(ambition) >= rank(previous ?? ambition),
                             font: .system(size: 12, weight: .semibold))
-                MenuChevron(size: 8)
+                    .foregroundStyle(ambition.pillInk)
+                MenuChevron(size: 8, tint: ambition == .restrained ? .secondary : ambition.tint.opacity(0.7))
             }
         }
         .motion(Motion.pop, value: ambition)

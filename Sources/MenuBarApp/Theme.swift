@@ -69,6 +69,13 @@ enum Theme {
         light: NSColor(srgbRed: 0.190, green: 0.380, blue: 0.620, alpha: 1),
         dark: NSColor(srgbRed: 0.498, green: 0.659, blue: 0.871, alpha: 1))
 
+    // A Design session set to go all out. Violet is the project wheel's ink, kept clear of
+    // the green, amber, blue and red the shield beside it uses to mean trust levels. The
+    // dark side is lifted until the pill's words read on its own tint.
+    static let showcase = adaptive(
+        light: NSColor(srgbRed: 0.361, green: 0.200, blue: 0.588, alpha: 1),
+        dark: NSColor(srgbRed: 0.690, green: 0.522, blue: 0.969, alpha: 1))
+
     // The mark on anything the app itself owns: the brand tile, and Home wherever it
     // needs a colour of its own.
     static let brand = Color(red: 0.867, green: 0.878, blue: 0.282)
