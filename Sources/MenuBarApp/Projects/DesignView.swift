@@ -97,8 +97,7 @@ struct DesignView: View {
                     if !designEmpty { conversationExpanded.toggle() }
                 } label: {
                     HStack(spacing: 9) {
-                        Image(systemName: "bubble.left")
-                            .foregroundStyle(Theme.accent)
+                        conversationBot(session, needsYou: needsYou, size: 20)
                         Text("Conversation")
                             .font(.system(size: 13, weight: .semibold))
                         Spacer(minLength: 4)
@@ -205,28 +204,37 @@ struct DesignView: View {
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.26), value: conversationMinimized)
     }
 
-    // A button as well as a hover target, so the panel can be brought back by keyboard
-    // and by assistive tools too.
-    //
-    // The tab always shows the session's bot, so it is clear who is in the conversation.
-    // While the session is alive the bot is ringed in the state colour, and it breathes
-    // while a turn is being worked on, the way its avatar does in the sidebar.
-    private func minimizedConversation(_ session: ChatSession, needsYou: Bool) -> some View {
-        let tone: SessionTone = needsYou ? .needsYou
+    private func conversationTone(needsYou: Bool) -> SessionTone {
+        needsYou ? .needsYou
             : runner.waitingSince(sessionID) != nil ? .waiting
             : runner.state(sessionID).isBusy ? .running : .idle
+    }
+
+    // The panel always shows the session's bot, open or minimized, so it is clear who is
+    // in the conversation. While the session is alive the bot is ringed in the state
+    // colour, and it breathes while a turn is being worked on, the way its avatar does in
+    // the sidebar.
+    private func conversationBot(_ session: ChatSession, needsYou: Bool, size: CGFloat) -> some View {
+        let tone = conversationTone(needsYou: needsYou)
         let bot = AgentAvatarSelection.avatar(named: session.agentAvatarName, from: appSettings.agentAvatars)
+        return Breathing(active: tone == .running) {
+            AgentAvatarView(image: bot.displayImage(for: sessionID), size: size)
+        }
+        .overlay(Circle().stroke(tone == .idle ? Color.clear : tone.colour, lineWidth: 1.5)
+            .padding(-3))
+        .accessibilityHidden(true)
+    }
+
+    // A button as well as a hover target, so the panel can be brought back by keyboard
+    // and by assistive tools too.
+    private func minimizedConversation(_ session: ChatSession, needsYou: Bool) -> some View {
+        let tone = conversationTone(needsYou: needsYou)
         return Button {
             conversationMinimized = false
         } label: {
             HStack(spacing: 10) {
-                Breathing(active: tone == .running) {
-                    AgentAvatarView(image: bot.displayImage(for: sessionID), size: 30)
-                }
-                .overlay(Circle().stroke(tone == .idle ? Color.clear : tone.colour, lineWidth: 1.5)
-                    .padding(-3))
-                .padding(.leading, -4)
-                .accessibilityHidden(true)
+                conversationBot(session, needsYou: needsYou, size: 30)
+                    .padding(.leading, -4)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Conversation")
                         .font(.system(size: 13, weight: .semibold))
@@ -445,20 +453,38 @@ struct DesignView: View {
                             }
                         },
                         accessory: {
-                            Button {
-                                let urls = FilePicker.chooseFiles(prompt: "Attach", message: "Choose references for this design.")
-                                runner.attach(Attachments.fromDrop(urls), to: sessionID)
-                                composerFocused = true
-                            } label: {
-                                Image(systemName: "paperclip")
-                                    .foregroundStyle(Theme.accent)
-                                    .frame(width: 28, height: 28)
-                                    .contentShape(Rectangle())
+                            // The box keeps room for one control at its side, and it is
+                            // always tall enough here to take the two stacked.
+                            VStack(spacing: 4) {
+                                SessionBotPicker(avatars: appSettings.agentAvatars,
+                                                 selectedName: botSelection,
+                                                 sessionID: sessionID,
+                                                 size: 22)
+                                Button {
+                                    let urls = FilePicker.chooseFiles(prompt: "Attach", message: "Choose references for this design.")
+                                    runner.attach(Attachments.fromDrop(urls), to: sessionID)
+                                    composerFocused = true
+                                } label: {
+                                    Image(systemName: "paperclip")
+                                        .foregroundStyle(Theme.accent)
+                                        .frame(width: 28, height: 28)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(blocked)
+                                .accessibilityLabel("Attach a reference")
                             }
-                            .buttonStyle(.plain)
-                            .disabled(blocked)
-                            .accessibilityLabel("Attach a reference")
                         })
+    }
+
+    private var botSelection: Binding<String> {
+        Binding(
+            get: {
+                AgentAvatarSelection.resolvedName(
+                    store.session(sessionID)?.agentAvatarName,
+                    availableNames: appSettings.agentAvatars.map { $0.url.lastPathComponent })
+            },
+            set: { store.setAgentAvatarName($0, for: sessionID) })
     }
 
     private func composerPlaceholder(_ session: ChatSession) -> String {

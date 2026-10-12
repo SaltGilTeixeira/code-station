@@ -2142,15 +2142,8 @@ struct SessionView: View {
     private func botSelection(for session: ChatSession) -> Binding<String> {
         Binding(
             get: {
-                if let name = store.session(sessionID)?.agentAvatarName,
-                   name == AgentAvatarSelection.defaultName
-                    || appSettings.agentAvatars.contains(where: {
-                        $0.url.lastPathComponent == name
-                    }) {
-                    return name
-                }
-                return AgentAvatarSelection.resolvedName(
-                    session.agentAvatarName,
+                AgentAvatarSelection.resolvedName(
+                    store.session(sessionID)?.agentAvatarName,
                     availableNames: appSettings.agentAvatars.map { $0.url.lastPathComponent })
             },
             set: { store.setAgentAvatarName($0, for: sessionID) })
