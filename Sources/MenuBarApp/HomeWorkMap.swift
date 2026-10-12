@@ -66,8 +66,6 @@ struct HomeWorkMap {
     enum Layout: Equatable {
         // Nothing running: one line saying so.
         case quiet
-        // A few sessions, each a full row with its buttons on it.
-        case rail
         // Projects around a hub, each with its first sessions beside it.
         case orbit
         // Too much for the orbit, or too little width: what needs you first, then every
@@ -110,8 +108,6 @@ struct HomeWorkMap {
         let projects = groups.count
         let count = active.count
         if count == 0 { return .quiet }
-        if projects <= RailLayout.maxProjects && count <= RailLayout.maxSessions
-            && width >= RailLayout.minWidth { return .rail }
         if projects <= OrbitLayout.maxProjects && count <= OrbitLayout.maxSessions
             && width >= OrbitLayout.minWidth { return .orbit }
         return .board
@@ -180,8 +176,6 @@ struct HomeWorkMapView: View {
                 switch layout {
                 case .quiet:
                     quiet
-                case .rail:
-                    RailMap(map: map, width: width, hasChanges: hasChanges, open: open, answer: answer)
                 case .orbit:
                     OrbitMap(map: map, width: width, hasChanges: hasChanges, workTime: workTime,
                              open: open, answer: answer, reveal: reveal,
@@ -506,8 +500,7 @@ struct MapConnector: Shape {
     }
 }
 
-// A session as a full row with its buttons on it, for the rail and for the board's list
-// of what needs you. A short request is answered right here; anything else opens the
+// A session as a full row with its buttons on it, for the board's list of what needs you. A short request is answered right here; anything else opens the
 // session.
 struct HomeMapActionRow: View {
     let live: HomeLive

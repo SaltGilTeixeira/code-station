@@ -204,8 +204,11 @@ struct OrbitLayout {
                 nodes.append(Node(group: group, center: tile, left: left, segment: segment))
 
                 // Out of the middle of the project's segment, heading away from the ring,
-                // then round to arrive level at the tile.
-                let angle = (segment.lowerBound + segment.upperBound) * .pi - .pi / 2
+                // then round to arrive level at the tile. A project that holds the whole
+                // ring has no middle to speak of, so its wire leaves facing its tile.
+                let angle = segment.upperBound - segment.lowerBound >= 1
+                    ? atan2(tile.y - centerY, tile.x - centerX)
+                    : (segment.lowerBound + segment.upperBound) * .pi - .pi / 2
                 let outward = CGPoint(x: cos(angle), y: sin(angle))
                 let start = CGPoint(x: centerX + outward.x * Self.wireRadius,
                                     y: centerY + outward.y * Self.wireRadius)
@@ -324,114 +327,6 @@ enum OrbitSpotlight: Equatable {
 
     static func opacity(_ spotlight: OrbitSpotlight?, group: UUID?, session: UUID? = nil) -> Double {
         spotlight?.lights(group: group, session: session) == false ? 0.2 : 1
-    }
-}
-
-// Where everything sits on the rail, the map for a short list: the hub on the left, each
-// project's tile beside it, and a row for every session that runs to the edge of the card,
-// so a handful of sessions use the width instead of leaving it empty.
-struct RailLayout {
-    static let hubSide: CGFloat = 112
-    static let rowHeight: CGFloat = 50
-    static let tallRowHeight: CGFloat = 56
-    static let maxProjects = 2
-    static let maxSessions = 4
-    // Below this a row is too short to hold its title next to its buttons.
-    static let minWidth: CGFloat = 600
-    static let nameWidth: CGFloat = 120
-
-    private static let rowGap: CGFloat = 8
-    private static let groupGap: CGFloat = 16
-    private static let tileExtent: CGFloat = 80
-
-    let size: CGSize
-    let hub: CGPoint
-    private(set) var nodes: [OrbitLayout.Node] = []
-    private(set) var rows: [OrbitLayout.Pill] = []
-    private(set) var wires: [OrbitLayout.Wire] = []
-
-    var motionKey: [CGRect] {
-        nodes.map { CGRect(origin: $0.center, size: .zero) } + rows.map(\.frame)
-    }
-
-    init(map: HomeWorkMap, width: CGFloat) {
-        let blocks = map.groups.map { group in
-            let heights = group.sessions.map(Self.height(of:))
-            let stack = heights.reduce(0, +) + Self.rowGap * CGFloat(heights.count - 1)
-            return (group: group, heights: heights, stack: stack, extent: max(Self.tileExtent, stack))
-        }
-        let content = blocks.map(\.extent).reduce(0, +) + Self.groupGap * CGFloat(max(blocks.count - 1, 0))
-        let height = max(Self.hubSide + 12, content)
-        size = CGSize(width: width, height: height)
-        let centerY = height / 2
-        hub = CGPoint(x: Self.hubSide / 2 + 4, y: centerY)
-
-        let tileX = Self.hubSide + 108
-        let tileEdge = OrbitLayout.tileSide / 2 + 7
-        let rowX = tileX + OrbitLayout.tileSide / 2 + 50
-        var top = centerY - content / 2
-        for block in blocks {
-            // A tile taller than its rows is lifted, so the name under it stays in the block.
-            let y = top + block.extent / 2 - (block.extent > block.stack ? OrbitLayout.tileLift : 0)
-            nodes.append(OrbitLayout.Node(group: block.group, center: CGPoint(x: tileX, y: y), left: false))
-            wires.append(OrbitLayout.Wire(id: "hub:\(block.group.id)",
-                                          start: CGPoint(x: hub.x + Self.hubSide / 2, y: centerY),
-                                          end: CGPoint(x: tileX - tileEdge, y: y),
-                                          kind: OrbitLayout.kind(of: block.group.sessions), trunk: true))
-            var rowY = y - block.stack / 2
-            for (live, rowHeight) in zip(block.group.sessions, block.heights) {
-                let frame = CGRect(x: rowX, y: rowY, width: width - rowX, height: rowHeight)
-                rows.append(OrbitLayout.Pill(live: live, frame: frame))
-                wires.append(OrbitLayout.Wire(id: "session:\(live.id)",
-                                              start: CGPoint(x: tileX + tileEdge, y: y),
-                                              end: CGPoint(x: frame.minX, y: frame.midY),
-                                              kind: OrbitLayout.kind(of: [live]), trunk: false))
-                rowY = frame.maxY + Self.rowGap
-            }
-            top += block.extent + Self.groupGap
-        }
-    }
-
-    static func height(of live: HomeLive) -> CGFloat {
-        live.needsAttention ? tallRowHeight : rowHeight
-    }
-}
-
-// The rail drawn: the hub, a tile for each project, and a row for each session with its
-// buttons on it, so a request is answered right there.
-struct RailMap: View {
-    let map: HomeWorkMap
-    let width: CGFloat
-    let hasChanges: (HomeLive) -> Bool
-    let open: (HomeLive, SessionDestination) -> Void
-    let answer: (HomeLive, PermissionAnswer) -> Void
-
-    var body: some View {
-        let layout = RailLayout(map: map, width: width)
-        ZStack(alignment: .topLeading) {
-            OrbitWires(wires: layout.wires)
-
-            OrbitHub(map: map, side: RailLayout.hubSide, ringWidth: 6, numberSize: 30)
-                .position(layout.hub)
-
-            ForEach(layout.nodes) { node in
-                OrbitTileFace(group: node.group, hovering: false)
-                    .accessibilityHidden(true)
-                    .position(node.center)
-                let name = OrbitTileName(name: node.group.identity.containerName, width: RailLayout.nameWidth)
-                name.position(name.center(under: node.center))
-            }
-
-            ForEach(layout.rows) { row in
-                let live = row.live
-                HomeMapActionRow(live: live, hasChanges: hasChanges(live),
-                                 open: { open(live, $0) }, answer: { answer(live, $0) })
-                    .frame(width: row.frame.width, height: row.frame.height)
-                    .position(x: row.frame.midX, y: row.frame.midY)
-            }
-        }
-        .frame(width: layout.size.width, height: layout.size.height)
-        .motion(HomeWorkMapView.reflow, value: layout.motionKey)
     }
 }
 
@@ -660,23 +555,19 @@ private struct OrbitWires: View {
         let dim = flowing.filter { OrbitSpotlight.opacity(spotlight, group: $0.group, session: $0.session) < 1 }
         ZStack {
             ForEach(wires) { wire in
-                let flows = !reduceMotion && wire.kind == .running
                 wire.connector
                     .trim(from: 0, to: built ? 1 : 0)
                     .stroke(Self.colour(wire.kind), style: Self.style(wire))
                     .animation(reduceMotion ? nil : OrbitOpening.draw.speed(1.2).delay(opening?.wire(wire) ?? 0),
                                value: built)
-                    // A running line grows like the others, then hands over to its flow.
-                    .opacity(flows && built ? 0 : 1)
-                    .animation(reduceMotion ? nil : .easeOut(duration: 0.5).delay(opening?.flow ?? 0), value: built)
                     .opacity(OrbitSpotlight.opacity(spotlight, group: wire.group, session: wire.session))
             }
             Group {
                 if !lit.isEmpty {
-                    FlowingWires(paths: Self.paths(lit), colour: Self.colour(.running))
+                    FlowingWires(paths: Self.paths(lit), colour: Theme.dotOn)
                 }
                 if !dim.isEmpty {
-                    FlowingWires(paths: Self.paths(dim), colour: Self.colour(.running))
+                    FlowingWires(paths: Self.paths(dim), colour: Theme.dotOn)
                         .opacity(0.2)
                 }
             }
@@ -687,9 +578,10 @@ private struct OrbitWires: View {
         .accessibilityHidden(true)
     }
 
-    // One path for each line width, since a layer strokes every line it holds the same.
+    // One path for each line width, since a layer strokes every line it holds the same. The
+    // moving dashes are a little heavier than the line they run along.
     static func paths(_ wires: [OrbitLayout.Wire]) -> [CGFloat: CGPath] {
-        Dictionary(grouping: wires, by: width).mapValues { group in
+        Dictionary(grouping: wires, by: { width($0) + 0.6 }).mapValues { group in
             let path = CGMutablePath()
             for wire in group {
                 path.addPath(wire.connector.path(in: .zero).cgPath)
@@ -701,7 +593,7 @@ private struct OrbitWires: View {
     static func colour(_ kind: OrbitLayout.Wire.Kind) -> Color {
         switch kind {
         case .attention: Theme.attention.opacity(0.7)
-        case .running: Theme.accent.opacity(0.4)
+        case .running: Theme.dotOn.opacity(0.38)
         case .quiet: Theme.accent.opacity(0.22)
         }
     }
@@ -712,7 +604,7 @@ private struct OrbitWires: View {
         let width = width(wire)
         return switch wire.kind {
         case .attention: StrokeStyle(lineWidth: width)
-        case .running: StrokeStyle(lineWidth: width, lineCap: .round, dash: FlowingWiresView.wireDash)
+        case .running: StrokeStyle(lineWidth: width, lineCap: .round)
         case .quiet: StrokeStyle(lineWidth: width, dash: [2, 4])
         }
     }
@@ -734,8 +626,8 @@ struct FlowingWires: NSViewRepresentable {
 }
 
 final class FlowingWiresView: LoopLayerView {
-    static let wireDash: [CGFloat] = [2, 6]
-    static let wirePeriod: TimeInterval = 0.48
+    static let wireDash: [CGFloat] = [2, 10]
+    static let wirePeriod: TimeInterval = 1.3
 
     private let dash: [CGFloat]
     private let period: TimeInterval
