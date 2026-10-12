@@ -1549,7 +1549,7 @@ struct ChangesView: View {
         }
         if let selectedID = fileSelection.activeID,
            let file = fresh.files.first(where: { $0.id == selectedID }) {
-            await loadDiff(file, root: fresh.root)
+            await loadDiff(file, root: fresh.root, recheckList: false)
         } else {
             closeDiff()
         }
@@ -1685,10 +1685,19 @@ struct ChangesView: View {
         diffScroll = .top
     }
 
-    private func loadDiff(_ file: GitChange, root: String) async {
+    private func loadDiff(_ file: GitChange, root: String, recheckList: Bool = true) async {
         loadingDiff = true
         let loaded = await GitInspector.reviewDiff(for: file, root: root)
         guard !Task.isCancelled, mode == .changes, fileSelection.activeID == file.id else { return }
+        // The list can be older than the tree, for example when a session commits just
+        // as a file is opened. An empty diff for a row that counts changed lines means
+        // the list is out of date, so read it again rather than show an empty file.
+        // The reload opens the diff without this check, so it cannot loop.
+        let countedLines = (file.added ?? 0) + (file.removed ?? 0) > 0
+        if recheckList, countedLines, loaded.lines.isEmpty, loaded.note == nil, loaded.images == nil {
+            await reload()
+            return
+        }
         let text = loaded.lines.isEmpty ? nil : await DiffText.build(
             loaded.lines,
             language: CodeLanguage(fileExtension: (file.path as NSString).pathExtension),
