@@ -293,7 +293,7 @@ struct DesignView: View {
                 }
                 .padding(14)
                 .background {
-                    TranscriptScrollObserver { isAtBottom in
+                    TranscriptScrollObserver(pinnedToBottom: transcriptAtBottom) { isAtBottom in
                         transcriptAtBottom = isAtBottom
                     }
                 }

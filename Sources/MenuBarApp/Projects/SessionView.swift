@@ -48,15 +48,18 @@ struct TranscriptWindow: Equatable {
 // AppKit's live-scroll notifications separate those cases, so streaming can keep its
 // place without taking the scroll position back from someone reading an earlier line.
 struct TranscriptScrollObserver: NSViewRepresentable {
+    let pinnedToBottom: Bool
     let onPositionChange: (Bool) -> Void
 
     func makeNSView(context: Context) -> TranscriptScrollObserverView {
         let view = TranscriptScrollObserverView()
+        view.pinnedToBottom = pinnedToBottom
         view.onPositionChange = onPositionChange
         return view
     }
 
     func updateNSView(_ view: TranscriptScrollObserverView, context: Context) {
+        view.pinnedToBottom = pinnedToBottom
         view.onPositionChange = onPositionChange
         view.observeEnclosingScrollView()
     }
@@ -68,6 +71,7 @@ struct TranscriptScrollObserver: NSViewRepresentable {
 
 @MainActor
 final class TranscriptScrollObserverView: NSView {
+    var pinnedToBottom = true
     var onPositionChange: ((Bool) -> Void)?
     private weak var observedScrollView: NSScrollView?
 
@@ -98,6 +102,11 @@ final class TranscriptScrollObserverView: NSView {
             selector: #selector(didLiveScroll),
             name: NSScrollView.didEndLiveScrollNotification,
             object: enclosingScrollView)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(viewportDidResize),
+            name: NSView.frameDidChangeNotification,
+            object: enclosingScrollView.contentView)
     }
 
     func stopObserving() {
@@ -106,7 +115,27 @@ final class TranscriptScrollObserverView: NSView {
             self, name: NSScrollView.didLiveScrollNotification, object: observedScrollView)
         NotificationCenter.default.removeObserver(
             self, name: NSScrollView.didEndLiveScrollNotification, object: observedScrollView)
+        NotificationCenter.default.removeObserver(
+            self, name: NSView.frameDidChangeNotification, object: observedScrollView.contentView)
         self.observedScrollView = nil
+    }
+
+    // When the pane gets shorter, say as the find bar opens above it, AppKit keeps the
+    // top of the view where it was, so the end of the conversation drops out of sight.
+    // SwiftUI only hears of the new height after that frame is drawn, so a pinned
+    // transcript is put back at its end here, before anything is drawn.
+    @objc private func viewportDidResize() {
+        guard pinnedToBottom, let scrollView = observedScrollView,
+              let documentView = scrollView.documentView else { return }
+        let clip = scrollView.contentView
+        let document = clip.documentRect
+        let visible = clip.bounds
+        let y = documentView.isFlipped
+            ? max(document.minY, document.maxY - visible.height)
+            : document.minY
+        guard abs(visible.minY - y) > 0.5 else { return }
+        clip.scroll(to: NSPoint(x: visible.minX, y: y))
+        scrollView.reflectScrolledClipView(clip)
     }
 
     @objc private func didLiveScroll() {
@@ -1572,7 +1601,7 @@ struct SessionView: View {
                     // Include the padding so the scroll target is the actual bottom.
                     .id(bottomAnchor)
                     .background {
-                        TranscriptScrollObserver { isAtBottom in
+                        TranscriptScrollObserver(pinnedToBottom: transcriptPinnedToBottom) { isAtBottom in
                             transcriptPinnedToBottom = isAtBottom
                         }
                     }

@@ -42,6 +42,32 @@ struct SessionScrollTests {
         #expect(pane.harness.runner.state(sessionID) == state)
     }
 
+    // The bar takes height from the top of the transcript. The end of the conversation
+    // must not drop out of sight for even one pass before it is scrolled back.
+    @Test func openingAndClosingFindKeepsAPinnedTranscriptStill() async throws {
+        let find = TranscriptFind()
+        let pane = try Pane(find: find)
+        defer { pane.harness.tearDown() }
+        let scroll = try await pane.transcript()
+        let documentView = try #require(scroll.documentView)
+        func endInWindow() -> CGFloat {
+            let end = documentView.isFlipped ? documentView.bounds.maxY : documentView.bounds.minY
+            return documentView.convert(NSPoint(x: 0, y: end), to: nil).y
+        }
+        let resting = endInWindow()
+        let height = scroll.frame.height
+
+        find.open(in: pane.harness.store.transcript(of: pane.harness.session.id))
+        pane.view.layoutSubtreeIfNeeded()
+        #expect(scroll.frame.height < height)
+        #expect(endInWindow() == resting)
+
+        find.close()
+        pane.view.layoutSubtreeIfNeeded()
+        #expect(scroll.frame.height == height)
+        #expect(endInWindow() == resting)
+    }
+
     @Test func theAgentIndicatorRevealsDelegationOutsideTheLoadedMessages() async throws {
         let pane = try Pane(includesAgent: true)
         defer {
