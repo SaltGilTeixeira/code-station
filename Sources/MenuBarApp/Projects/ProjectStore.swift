@@ -115,6 +115,18 @@ final class ProjectStore {
     // where it landed; a click on a row in the rail is already where the eye is.
     var sidebarHighlight: UUID?
 
+    // The project or workspace row the pointer is resting on in the rail, so Home's map
+    // can light the same project.
+    var pointedSidebarItem: UUID?
+
+    func pointSidebarItem(_ id: UUID, _ hovering: Bool) {
+        if hovering {
+            pointedSidebarItem = id
+        } else if pointedSidebarItem == id {
+            pointedSidebarItem = nil
+        }
+    }
+
     // Sessions that ended a turn while the user was not reading them on either screen.
     // This is about live attention rather than the conversation, so it is not saved: a
     // relaunch is not something to catch up on.

@@ -1442,6 +1442,7 @@ private struct WorkspaceHeaderRow: View {
     let onRename: (String) -> Void
     let onCancelRename: () -> Void
 
+    @Environment(ProjectStore.self) private var store
     @State private var draft = ""
     @State private var hovering = false
     @FocusState private var focused: Bool
@@ -1527,7 +1528,10 @@ private struct WorkspaceHeaderRow: View {
                 rows: [Tooltip.Row(label: "Sessions", value: "\(sessionCount)"),
                        Tooltip.Row(label: "Projects", value: "\(projects.count)")])
         }
-        .onPointerHover { hovering = $0 }
+        .onPointerHover {
+            hovering = $0
+            store.pointSidebarItem(workspace.id, $0)
+        }
         .onChange(of: isRenaming, initial: true) { _, renaming in
             guard renaming else { return }
             draft = workspace.name
@@ -1592,6 +1596,7 @@ private struct ProjectHeaderRow: View {
     let onRename: (String) -> Void
     let onCancelRename: () -> Void
 
+    @Environment(ProjectStore.self) private var store
     @State private var draft = ""
     @State private var hovering = false
     @FocusState private var focused: Bool
@@ -1704,7 +1709,10 @@ private struct ProjectHeaderRow: View {
             }
         }
         .appTooltip { tooltip }
-        .onPointerHover { hovering = $0 }
+        .onPointerHover {
+            hovering = $0
+            store.pointSidebarItem(project.id, $0)
+        }
         .onChange(of: isRenaming, initial: true) { _, renaming in
             guard renaming else { return }
             draft = project.name

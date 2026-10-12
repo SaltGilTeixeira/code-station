@@ -116,8 +116,10 @@ struct HomeWorkMapTests {
         #expect(HomeWorkMap(sessions: day([1, 1, 1])).layout(width: 1000) == .orbit)
         #expect(HomeWorkMap(sessions: day([3, 1, 2, 1])).layout(width: 1000) == .orbit)
         #expect(HomeWorkMap(sessions: day([6])).layout(width: 1000) == .orbit)
-        #expect(HomeWorkMap(sessions: day([11])).layout(width: 1000) == .board)
-        #expect(HomeWorkMap(sessions: day([1, 1, 1, 1, 1, 1])).layout(width: 1400) == .board)
+        #expect(HomeWorkMap(sessions: day([11])).layout(width: 1000) == .orbit)
+        #expect(HomeWorkMap(sessions: day([3, 2, 2, 2, 2, 2, 2, 2, 1])).layout(width: 1000) == .orbit)
+        #expect(HomeWorkMap(sessions: day([21])).layout(width: 1000) == .board)
+        #expect(HomeWorkMap(sessions: day(Array(repeating: 1, count: 11))).layout(width: 1400) == .board)
         // A narrow window skips the orbit, and past a point the rail too.
         #expect(HomeWorkMap(sessions: day([3, 1, 2, 1])).layout(width: 700) == .board)
         #expect(HomeWorkMap(sessions: day([1])).layout(width: 700) == .rail)
@@ -161,8 +163,8 @@ struct HomeWorkMapTests {
         for width in [OrbitLayout.minWidth, 1000, 1400] {
             let layout = OrbitLayout(map: HomeWorkMap(sessions: sessions), width: width)
             #expect(layout.nodes.count == 7)
-            #expect(layout.pills.count == 11)
-            #expect(layout.more.count == 1)
+            #expect(layout.pills.count == 12)
+            #expect(layout.more.isEmpty)
             expectNoOverlaps(layout)
         }
     }
@@ -174,7 +176,7 @@ struct HomeWorkMapTests {
         let map = HomeWorkMap(sessions: sessions)
         #expect(map.layout(width: 1100) == .orbit)
         let layout = OrbitLayout(map: map, width: 1100)
-        #expect(layout.size.height < 260)
+        #expect(layout.size.height == OrbitLayout.minHeight)
         expectNoOverlaps(layout)
     }
 
@@ -215,13 +217,104 @@ struct HomeWorkMapTests {
         }
     }
 
-    @Test func orbitFoldsSessionsPastTwoIntoAChip() {
+    @Test func orbitFoldsSessionsPastTheShownOnesIntoAChip() {
         let project = UUID()
         let sessions = (0..<5).map { _ in live(project: project, name: "Busy") }
         let layout = OrbitLayout(map: HomeWorkMap(sessions: sessions), width: 1000)
-        #expect(layout.pills.count == OrbitLayout.shownPerProject)
-        #expect(layout.more.map(\.count) == [3])
+        #expect(layout.shownPerProject == 3)
+        #expect(layout.pills.count == 3)
+        #expect(layout.more.map(\.count) == [2])
         #expect(layout.more[0].frame.minY > layout.pills.map(\.frame.maxY).max() ?? 0)
+        // The ring still shows every session.
+        #expect(layout.arcs.count == 5)
+    }
+
+    @Test func orbitShowsTwoPerProjectOnABusyDay() {
+        let sessions = day([4, 3, 3, 2, 2, 2, 1]) + [live(workspace: UUID(), name: "Workspace")]
+        #expect(sessions.count == 18)
+        let layout = OrbitLayout(map: HomeWorkMap(sessions: sessions), width: 1200)
+        #expect(layout.shownPerProject == 2)
+        #expect(layout.pills.count == 14)
+        #expect(layout.more.map(\.count).sorted() == [1, 1, 2])
+        #expect(layout.arcs.count == 18)
+        expectNoOverlaps(layout)
+    }
+
+    @Test func orbitFitsFiveProjectsInEachColumnWithoutOverlaps() {
+        var sessions = day([3, 3, 2, 2, 2, 2, 2, 2, 1, 1])
+        sessions[0] = live(project: sessions[0].session.projectID, name: "Project 0", tone: .needsYou,
+                           permission: permission)
+        #expect(sessions.count == OrbitLayout.maxSessions)
+        let map = HomeWorkMap(sessions: sessions)
+        for width in [OrbitLayout.minWidth, 1100, 1400] {
+            #expect(map.layout(width: width) == .orbit)
+            let layout = OrbitLayout(map: map, width: width)
+            #expect(layout.nodes.filter(\.left).count == 5)
+            #expect(layout.nodes.filter { !$0.left }.count == 5)
+            expectNoOverlaps(layout)
+        }
+    }
+
+    @Test func ringSplitsLikeTheColumns() {
+        let layout = OrbitLayout(map: HomeWorkMap(sessions: day([3, 1, 2, 2])), width: 1100)
+        for node in layout.nodes {
+            // The right column holds the right half of the ring and the left column the left.
+            #expect(node.left ? node.segment.lowerBound >= 0.5 : node.segment.upperBound <= 0.5)
+            let arcs = layout.arcs.filter { $0.live.containerID == node.id }
+            #expect(arcs.count == node.group.sessions.count)
+            for arc in arcs {
+                #expect(arc.start >= node.segment.lowerBound - 1e-9 && arc.end <= node.segment.upperBound + 1e-9)
+            }
+        }
+        // Both halves start at the top and fill it completely, without arcs over each other.
+        let sorted = layout.arcs.sorted { $0.start < $1.start }
+        #expect(abs(sorted.first!.start) < 1e-9 && abs(sorted.last!.end - 1) < 1e-9)
+        for (first, second) in zip(sorted, sorted.dropFirst()) {
+            #expect(abs(first.end - second.start) < 1e-9)
+        }
+        // The top row on each side is first on its side of the ring.
+        let topRight = layout.nodes.filter { !$0.left }.min { $0.center.y < $1.center.y }!
+        #expect(topRight.segment.lowerBound == 0)
+        let topLeft = layout.nodes.filter(\.left).min { $0.center.y < $1.center.y }!
+        #expect(topLeft.segment.upperBound == 1)
+    }
+
+    @Test func aSingleProjectTakesTheWholeRing() {
+        let layout = OrbitLayout(map: HomeWorkMap(sessions: day([5])), width: 1000)
+        #expect(layout.nodes.count == 1)
+        #expect(layout.nodes[0].segment == 0...1)
+        #expect(layout.arcs.count == 5)
+    }
+
+    @Test func everyHubWireStartsInsideItsProjectsSegment() {
+        let layout = OrbitLayout(map: HomeWorkMap(sessions: day([3, 1, 2, 4, 1, 2, 1])), width: 1200)
+        for node in layout.nodes {
+            let wire = layout.wires.first { $0.id == "hub:\(node.id)" }!
+            let angle = atan2(wire.start.y - layout.hub.y, wire.start.x - layout.hub.x)
+            var turn = (angle + .pi / 2) / (2 * .pi)
+            if turn < 0 { turn += 1 }
+            #expect(node.segment.contains(turn))
+            let distance = hypot(wire.start.x - layout.hub.x, wire.start.y - layout.hub.y)
+            #expect(distance > OrbitLayout.projectRingRadius)
+            #expect(wire.group == node.id)
+        }
+    }
+
+    @Test func cardOpensBesideItsPillTowardsTheMiddle() {
+        let layout = OrbitLayout(map: HomeWorkMap(sessions: day([2, 2, 1])), width: 1200)
+        let card = CGSize(width: 330, height: 200)
+        for pill in layout.pills {
+            let center = layout.cardCenter(for: pill.id, size: card)
+            if pill.left {
+                #expect(abs(center.x - card.width / 2 - pill.frame.minX) < 1e-6)
+            } else {
+                #expect(abs(center.x + card.width / 2 - pill.frame.maxX) < 1e-6)
+            }
+            #expect(center.x - card.width / 2 >= 10 && center.x + card.width / 2 <= layout.size.width - 10)
+        }
+        // A session with no pill opens under the ring.
+        let ringOnly = layout.cardCenter(for: UUID(), size: card)
+        #expect(ringOnly.x == layout.hub.x)
     }
 
     @Test func orbitWiresFollowTheStateOfWhatTheyLeadTo() {
@@ -235,6 +328,7 @@ struct HomeWorkMapTests {
         #expect(kinds["session:\(needs.id)"] == .attention)
         #expect(kinds["session:\(running.id)"] == .running)
         #expect(kinds["session:\(waiting.id)"] == .quiet)
+        #expect(layout.wires.first { $0.id == "session:\(needs.id)" }?.session == needs.id)
         #expect(layout.pills.first { $0.id == needs.id }?.frame.height == OrbitLayout.tallPillHeight)
     }
 

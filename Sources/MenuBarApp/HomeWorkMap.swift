@@ -91,7 +91,7 @@ struct HomeWorkMap {
         var parts: [String] = []
         if projects > 0 { parts.append(counted(projects, "project")) }
         if workspaces > 0 { parts.append(counted(workspaces, "workspace")) }
-        return parts.joined(separator: " · ")
+        return parts.joined(separator: " and ")
     }
 
     var groups: [Group] {
@@ -155,10 +155,19 @@ struct HomeWorkMapView: View {
     // The room the map has inside its card.
     let width: CGFloat
     let hasChanges: (HomeLive) -> Bool
+    // How long a session has spent working, across every turn it has taken.
+    let workTime: (HomeLive) -> TimeInterval
     let open: (HomeLive, SessionDestination) -> Void
     let answer: (HomeLive, PermissionAnswer) -> Void
     // Shows a project or workspace in the sidebar, where all of its sessions are listed.
     let reveal: (HomeWorkMap.Group) -> Void
+    // The session offered as the way back in when nothing is running.
+    let resumable: HomeLive?
+    let startSession: () -> Void
+    // Whether the orbit builds itself up as it appears. It does once each time Home opens,
+    // and the map reports when that has been used up.
+    let opening: Bool
+    let onOpened: () -> Void
 
     static let reflow = Animation.smooth(duration: 0.3)
 
@@ -174,8 +183,9 @@ struct HomeWorkMapView: View {
                 case .rail:
                     RailMap(map: map, width: width, hasChanges: hasChanges, open: open, answer: answer)
                 case .orbit:
-                    OrbitMap(map: map, width: width, hasChanges: hasChanges, open: open, answer: answer,
-                             reveal: reveal)
+                    OrbitMap(map: map, width: width, hasChanges: hasChanges, workTime: workTime,
+                             open: open, answer: answer, reveal: reveal,
+                             opening: opening, onOpened: onOpened)
                 case .board:
                     HomeBoard(map: map, width: width, hasChanges: hasChanges, open: open,
                               answer: answer, reveal: reveal)
@@ -204,38 +214,92 @@ struct HomeWorkMapView: View {
     }
 
     private var heading: some View {
-        HStack {
-            Label("Your work map", systemImage: "square.grid.2x2")
+        HStack(spacing: 14) {
+            Label("Your work map", systemImage: "scope")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.accent)
             Spacer(minLength: 12)
-            if !map.active.isEmpty {
-                Text("\(counted(map.active.count, "session")) across \(map.containerSummary)")
+            if map.active.isEmpty {
+                Text("Nothing running")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            } else {
+                let needs = map.waiting.count
+                if needs > 0 {
+                    HStack(spacing: 6) {
+                        MapLight(tone: .needsYou)
+                        Text("\(needs) need\(needs == 1 ? "s" : "") you")
+                    }
+                }
+                let waits = map.backgroundWaitCount
+                if waits > 0 {
+                    HStack(spacing: 6) {
+                        MapLight(tone: .waiting)
+                        Text("\(waits) waiting")
+                    }
+                }
+                Text("\(counted(map.active.count, "session")) across \(map.containerSummary)")
             }
         }
+        .font(.system(size: 12))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
     }
 
+    // The same ring the orbit is drawn around, empty, so a quiet day still reads as the map.
     private var quiet: some View {
-        HStack(spacing: 16) {
-            Text("0")
-                .font(.serif(20, .medium))
-                .foregroundStyle(.tertiary)
-                .frame(width: 52, height: 52)
-                .overlay(Circle().stroke(Theme.border, style: StrokeStyle(lineWidth: 1.5, dash: [4, 3])))
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Room for your next idea").font(.serif(15, .semibold))
+        VStack(spacing: 18) {
+            ZStack {
+                Circle()
+                    .stroke(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [2, 4]))
+                    .frame(width: 2 * OrbitLayout.orbitRadius, height: 2 * OrbitLayout.orbitRadius)
+                Circle()
+                    .stroke(Theme.hairline, lineWidth: OrbitLayout.ringWidth)
+                    .frame(width: 2 * OrbitLayout.ringRadius, height: 2 * OrbitLayout.ringRadius)
+                Circle()
+                    .stroke(Theme.border, style: StrokeStyle(lineWidth: 1.5, dash: [3, 4]))
+                    .frame(width: 2 * OrbitLayout.projectRingRadius,
+                           height: 2 * OrbitLayout.projectRingRadius)
+                VStack(spacing: 4) {
+                    Text("0")
+                        .font(.serif(50, .medium))
+                        .foregroundStyle(.tertiary)
+                    Text("working")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: OrbitLayout.hubSide, height: OrbitLayout.hubSide)
+            .accessibilityHidden(true)
+
+            VStack(spacing: 5) {
+                Text("Room for your next idea").font(.serif(17, .semibold))
                 Text("Nothing is running. Start something new, or pick up where you left off.")
-                    .font(.system(size: 12))
+                    .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer(minLength: 0)
+            .accessibilityElement(children: .combine)
+
+            HStack(spacing: 8) {
+                ActionButton(title: "Start a session", tone: .green, height: 30, size: 12.5,
+                             action: startSession)
+                if let resumable {
+                    ActionButton(title: "Resume “\(Self.shortened(resumable.session.title))”",
+                                 tone: .outlined, height: 30, size: 12.5) {
+                        open(resumable, resumable.primaryAction(hasChanges: hasChanges(resumable)).destination)
+                    }
+                }
+            }
         }
-        .accessibilityElement(children: .combine)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 6)
+    }
+
+    // A title cut to fit on a button beside another one.
+    private static func shortened(_ title: String) -> String {
+        title.count > 40 ? title.prefix(39).trimmingCharacters(in: .whitespaces) + "…" : title
     }
 }
 
@@ -402,20 +466,42 @@ private struct BoardMoreItem: View {
 
 struct MapConnector: Shape {
     var start: CGPoint
+    var control1: CGPoint
+    var control2: CGPoint
     var end: CGPoint
 
-    var animatableData: AnimatablePair<CGPoint.AnimatableData, CGPoint.AnimatableData> {
-        get { AnimatablePair(start.animatableData, end.animatableData) }
-        set { start.animatableData = newValue.first; end.animatableData = newValue.second }
+    init(start: CGPoint, control1: CGPoint, control2: CGPoint, end: CGPoint) {
+        self.start = start
+        self.control1 = control1
+        self.control2 = control2
+        self.end = end
+    }
+
+    // Bends halfway across, so the line leaves and arrives level.
+    init(start: CGPoint, end: CGPoint) {
+        let middle = (start.x + end.x) / 2
+        self.init(start: start, control1: CGPoint(x: middle, y: start.y),
+                  control2: CGPoint(x: middle, y: end.y), end: end)
+    }
+
+    var animatableData: AnimatablePair<AnimatablePair<CGPoint.AnimatableData, CGPoint.AnimatableData>,
+                                       AnimatablePair<CGPoint.AnimatableData, CGPoint.AnimatableData>> {
+        get {
+            AnimatablePair(AnimatablePair(start.animatableData, control1.animatableData),
+                           AnimatablePair(control2.animatableData, end.animatableData))
+        }
+        set {
+            start.animatableData = newValue.first.first
+            control1.animatableData = newValue.first.second
+            control2.animatableData = newValue.second.first
+            end.animatableData = newValue.second.second
+        }
     }
 
     func path(in rect: CGRect) -> Path {
-        let middle = (start.x + end.x) / 2
         var path = Path()
         path.move(to: start)
-        path.addCurve(to: end,
-                      control1: CGPoint(x: middle, y: start.y),
-                      control2: CGPoint(x: middle, y: end.y))
+        path.addCurve(to: end, control1: control1, control2: control2)
         return path
     }
 }

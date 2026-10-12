@@ -10,6 +10,11 @@ struct HomeView: View {
     @Environment(AppSettings.self) private var appSettings
     @Environment(WorkingTreeWatch.self) private var workingTrees
     @Environment(SessionTimeWatch.self) private var sessionTimes
+    @Environment(GlobalCommandPaletteController.self) private var commandPalette
+
+    // The map builds itself up the first time it is shown each time Home opens, and then
+    // only follows the work.
+    @State private var mapOpened = false
 
     // Recomputed once per redraw and handed down, because every section below counts over
     // the same list of sessions.
@@ -79,11 +84,16 @@ struct HomeView: View {
                     HomeWorkMapView(map: map,
                                     width: geometry.size.width - 48 - 40,
                                     hasChanges: { hasChanges(in: $0.session) },
+                                    workTime: workTime,
                                     open: { live, destination in
                                         store.selectSession(live.id, destination: destination)
                                     },
                                     answer: answer,
-                                    reveal: reveal)
+                                    reveal: reveal,
+                                    resumable: standing.resumable.first,
+                                    startSession: { startSession(standing) },
+                                    opening: !mapOpened,
+                                    onOpened: { mapOpened = true })
                         // A session card on the map can hang below it, over the next section.
                         .zIndex(1)
                     timeSpent(standing)
@@ -116,6 +126,26 @@ struct HomeView: View {
         } else {
             store.selectProject(group.identity.session.projectID)
         }
+    }
+
+    // A new session starts where the latest work happened, since that is most likely where
+    // it belongs. A task runs its own prompt rather than an empty session, so it is passed
+    // over.
+    private func startSession(_ standing: Standing) {
+        let recent = standing.sessions.first { store.project($0.session.projectID)?.kind != .adHoc }
+        if let workspace = recent?.session.workspaceID {
+            store.selectWorkspace(workspace)
+        } else if let project = recent?.session.projectID ?? store.selectedProjectID {
+            store.selectProject(project)
+        }
+        commandPalette.requestNewSession()
+    }
+
+    // Every turn the session has taken, including those of a Design conversation working
+    // beside it.
+    private func workTime(_ live: HomeLive) -> TimeInterval {
+        let sources = live.liveID == live.id ? [live.id] : [live.id, live.liveID]
+        return sources.flatMap(sessionTimes.spans(for:)).reduce(0) { $0 + $1.seconds }
     }
 
     // Answered from Home exactly as the session's own card would answer it.

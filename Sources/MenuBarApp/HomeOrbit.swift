@@ -6,17 +6,37 @@ import SwiftUI
 // Projects take a left and a right column so their sessions always have room to reach
 // outward, away from the hub. The map is only as tall as its busiest column, and a column
 // grows the map rather than squeezing its rows, so sessions are never laid over each other.
+//
+// The ring in the middle is split the way the columns are: the right half holds the right
+// column's sessions from the top down, and the left half the left column's. Each project's
+// wire leaves the ring from the middle of its own share of it, so the ring and the wires
+// always agree.
 struct OrbitLayout {
     struct Node: Identifiable {
         let group: HomeWorkMap.Group
         let center: CGPoint
         let left: Bool
+        // The project's share of the ring, in fractions of a turn clockwise from the top.
+        var segment: ClosedRange<CGFloat> = 0...0
         var id: UUID { group.id }
+    }
+
+    // One session's arc on the ring. Every session has one, including those past the
+    // ones shown as pills.
+    struct Arc: Identifiable {
+        let live: HomeLive
+        let start: CGFloat
+        let end: CGFloat
+        let left: Bool
+        // How many arcs come before this one on its side of the ring.
+        let step: Int
+        var id: UUID { live.id }
     }
 
     struct Pill: Identifiable {
         let live: HomeLive
         let frame: CGRect
+        var left = false
         var id: UUID { live.id }
     }
 
@@ -24,6 +44,7 @@ struct OrbitLayout {
         let group: HomeWorkMap.Group
         let count: Int
         let frame: CGRect
+        var left = false
         var id: UUID { group.id }
     }
 
@@ -31,41 +52,88 @@ struct OrbitLayout {
         enum Kind { case running, attention, quiet }
         let id: String
         let start: CGPoint
+        let control1: CGPoint
+        let control2: CGPoint
         let end: CGPoint
         let kind: Kind
         // From the hub to a project, drawn a little heavier than a project to a session.
         let trunk: Bool
+        // What the wire belongs to, so it can stay lit with them.
+        var group: UUID?
+        var session: UUID?
+        // Its place among the wires of its kind, for the order they grow in.
+        var order = 0
+
+        init(id: String, start: CGPoint, control1: CGPoint, control2: CGPoint, end: CGPoint,
+             kind: Kind, trunk: Bool, group: UUID? = nil, session: UUID? = nil, order: Int = 0) {
+            self.id = id
+            self.start = start
+            self.control1 = control1
+            self.control2 = control2
+            self.end = end
+            self.kind = kind
+            self.trunk = trunk
+            self.group = group
+            self.session = session
+            self.order = order
+        }
+
+        init(id: String, start: CGPoint, end: CGPoint, kind: Kind, trunk: Bool,
+             group: UUID? = nil, session: UUID? = nil, order: Int = 0) {
+            let connector = MapConnector(start: start, end: end)
+            self.init(id: id, start: start, control1: connector.control1, control2: connector.control2,
+                      end: end, kind: kind, trunk: trunk, group: group, session: session, order: order)
+        }
+
+        var connector: MapConnector {
+            MapConnector(start: start, control1: control1, control2: control2, end: end)
+        }
     }
 
-    static let hubSide: CGFloat = 136
+    static let ringRadius: CGFloat = 94
+    static let ringWidth: CGFloat = 13
+    static let projectRingRadius: CGFloat = 112
+    static let projectRingWidth: CGFloat = 3
+    static let orbitRadius: CGFloat = 70
+    static let hubSide: CGFloat = 2 * projectRingRadius + 6
+    // The space left at each end of an arc, as a fraction of a turn.
+    static let arcGap: CGFloat = 0.022 / (2 * .pi)
     static let tileSide: CGFloat = 40
     static let pillHeight: CGFloat = 32
-    static let tallPillHeight: CGFloat = 44
-    static let pillGap: CGFloat = 7
-    static let shownPerProject = 2
-    static let maxProjects = 5
-    static let maxSessions = 10
+    static let tallPillHeight: CGFloat = 48
+    static let pillGap: CGFloat = 8
+    static let maxProjects = 10
+    static let maxSessions = 20
+    // Past this many sessions each project shows two pills rather than three, so a busy
+    // day still fits on a screen. The ring always shows every session.
+    static let roomyDay = 12
     // A narrower map leaves the session pills too short to read a title in.
     static let minWidth: CGFloat = 860
     // A tile sits this far above the middle of its row, so the name under it stays inside
     // the row.
     static let tileLift: CGFloat = 8
-    // Room for the hub, so a map with one project in each column still holds it.
-    static let minHeight: CGFloat = hubSide + 2 * margin + 20
+    private static let margin: CGFloat = 22
+    // Room for the ring, so a map with one project in each column still holds it.
+    static let minHeight: CGFloat = hubSide + 2 * margin + 34
 
     // How much height a project takes when it has a single session: the tile, its halo and
     // the name under it.
-    private static let nodeExtent: CGFloat = 74
-    private static let margin: CGFloat = 14
-    private static let rowGap: CGFloat = 18
-    private static let pillReach: CGFloat = 46
+    private static let nodeExtent: CGFloat = 84
+    private static let rowGap: CGFloat = 22
+    private static let pillReach: CGFloat = 50
+    // A project's wire leaves just outside the project ring.
+    private static let wireRadius: CGFloat = projectRingRadius + 6
     // The name under a tile stops short of the pills beside it.
     static let nameWidth: CGFloat = 2 * pillReach - 8
 
     let size: CGSize
     let hub: CGPoint
     let pillWidth: CGFloat
+    let shownPerProject: Int
+    // The most arcs on either side of the ring, which is how long the ring takes to draw.
+    private(set) var steps = 0
     private(set) var nodes: [Node] = []
+    private(set) var arcs: [Arc] = []
     private(set) var pills: [Pill] = []
     private(set) var more: [More] = []
     private(set) var wires: [Wire] = []
@@ -73,16 +141,19 @@ struct OrbitLayout {
     // Everything that moves when the map changes, so the move can be animated as one.
     var motionKey: [CGRect] {
         nodes.map { CGRect(origin: $0.center, size: .zero) } + pills.map(\.frame) + more.map(\.frame)
+            + arcs.map { CGRect(x: $0.start, y: $0.end, width: 0, height: 0) }
     }
 
     init(map: HomeWorkMap, width: CGFloat) {
         let groups = map.groups
+        let shownPerProject = map.active.count > Self.roomyDay ? 2 : 3
+        self.shownPerProject = shownPerProject
         let leftCount = (groups.count + 1) / 2
         let columns = [(Array(groups.prefix(leftCount)), true),
                        (Array(groups.dropFirst(leftCount)), false)]
 
         func stack(_ group: HomeWorkMap.Group) -> (shown: [HomeLive], hidden: Int, height: CGFloat) {
-            let shown = Array(group.sessions.prefix(Self.shownPerProject))
+            let shown = Array(group.sessions.prefix(shownPerProject))
             let hidden = group.sessions.count - shown.count
             let heights = shown.map(Self.height(of:)) + (hidden > 0 ? [Self.pillHeight] : [])
             return (shown, hidden, heights.reduce(0, +) + Self.pillGap * CGFloat(heights.count - 1))
@@ -98,47 +169,76 @@ struct OrbitLayout {
         let centerY = height / 2
         hub = CGPoint(x: centerX, y: centerY)
 
-        let reach = min(250, max(176, width * 0.2))
-        pillWidth = min(250, centerX - reach - Self.pillReach - 30)
+        let reach = min(240, max(200, width * 0.19))
+        pillWidth = min(300, centerX - reach - Self.pillReach - 10)
         let tileEdge = Self.tileSide / 2 + 7
+        // With a single column its side of the ring is the whole ring.
+        let share: CGFloat = columns[1].0.isEmpty ? 1 : 0.5
 
         for (index, (column, left)) in columns.enumerated() {
+            let total = column.map(\.sessions.count).reduce(0, +)
+            let unit = share / CGFloat(max(total, 1))
+            var done = 0
             var top = centerY - columnHeights[index] / 2
             for group in column {
                 let rowHeight = extent(group)
                 let y = top + rowHeight / 2
                 // Rows further from the middle bend in towards the hub, which is what turns
                 // two columns into an orbit.
-                let bend = min(abs(y - centerY), 160) * 0.32
+                let bend = min(abs(y - centerY), 170) * 0.3
                 let x = left ? centerX - reach + bend : centerX + reach - bend
                 let tile = CGPoint(x: x, y: y - Self.tileLift)
-                nodes.append(Node(group: group, center: tile, left: left))
 
-                wires.append(Wire(id: "hub:\(group.id)",
-                                  start: CGPoint(x: centerX + (left ? -1 : 1) * Self.hubSide / 2,
-                                                 y: centerY),
-                                  end: CGPoint(x: x + (left ? 1 : -1) * tileEdge, y: tile.y),
-                                  kind: Self.kind(of: group.sessions), trunk: true))
+                // The right half fills clockwise from the top and the left half the other
+                // way, so both read from the top down, as the columns do.
+                let count = group.sessions.count
+                let segment = left
+                    ? (1 - CGFloat(done + count) * unit)...(1 - CGFloat(done) * unit)
+                    : (CGFloat(done) * unit)...(CGFloat(done + count) * unit)
+                for (slot, live) in group.sessions.enumerated() {
+                    let step = done + slot
+                    let start = left ? 1 - CGFloat(step + 1) * unit : CGFloat(step) * unit
+                    arcs.append(Arc(live: live, start: start, end: start + unit, left: left, step: step))
+                }
+                done += count
+                nodes.append(Node(group: group, center: tile, left: left, segment: segment))
+
+                // Out of the middle of the project's segment, heading away from the ring,
+                // then round to arrive level at the tile.
+                let angle = (segment.lowerBound + segment.upperBound) * .pi - .pi / 2
+                let outward = CGPoint(x: cos(angle), y: sin(angle))
+                let start = CGPoint(x: centerX + outward.x * Self.wireRadius,
+                                    y: centerY + outward.y * Self.wireRadius)
+                let end = CGPoint(x: x + (left ? 1 : -1) * tileEdge, y: tile.y)
+                wires.append(Wire(id: "hub:\(group.id)", start: start,
+                                  control1: CGPoint(x: start.x + outward.x * 46, y: start.y + outward.y * 46),
+                                  control2: CGPoint(x: end.x + (left ? 56 : -56), y: end.y),
+                                  end: end, kind: Self.kind(of: group.sessions), trunk: true,
+                                  group: group.id, order: nodes.count - 1))
 
                 let (shown, hidden, stackHeight) = stack(group)
                 let pillX = left ? x - Self.pillReach - pillWidth : x + Self.pillReach
+                let branch = CGPoint(x: x + (left ? -1 : 1) * tileEdge, y: tile.y)
                 var pillY = y - stackHeight / 2
                 for live in shown {
                     let frame = CGRect(x: pillX, y: pillY, width: pillWidth, height: Self.height(of: live))
-                    pills.append(Pill(live: live, frame: frame))
-                    wires.append(Wire(id: "session:\(live.id)",
-                                      start: CGPoint(x: x + (left ? -1 : 1) * tileEdge, y: tile.y),
+                    pills.append(Pill(live: live, frame: frame, left: left))
+                    wires.append(Wire(id: "session:\(live.id)", start: branch,
                                       end: CGPoint(x: left ? frame.maxX : frame.minX, y: frame.midY),
-                                      kind: Self.kind(of: [live]), trunk: false))
+                                      kind: Self.kind(of: [live]), trunk: false,
+                                      group: group.id, session: live.id, order: pills.count - 1))
                     pillY = frame.maxY + Self.pillGap
                 }
                 if hidden > 0 {
-                    more.append(More(group: group, count: hidden,
-                                     frame: CGRect(x: pillX, y: pillY, width: pillWidth,
-                                                   height: Self.pillHeight)))
+                    let frame = CGRect(x: pillX, y: pillY, width: pillWidth, height: Self.pillHeight)
+                    more.append(More(group: group, count: hidden, frame: frame, left: left))
+                    wires.append(Wire(id: "more:\(group.id)", start: branch,
+                                      end: CGPoint(x: left ? frame.maxX : frame.minX, y: frame.midY),
+                                      kind: .quiet, trunk: false, group: group.id, order: pills.count))
                 }
                 top += rowHeight + Self.rowGap
             }
+            steps = max(steps, total)
         }
     }
 
@@ -151,6 +251,79 @@ struct OrbitLayout {
     static func kind(of sessions: [HomeLive]) -> Wire.Kind {
         sessions.contains(where: \.needsAttention) ? .attention
             : sessions.contains(where: { $0.tone == .running }) ? .running : .quiet
+    }
+
+    // Where a session's card opens: beside its pill, reaching in towards the middle of the
+    // map, under the pill when it fits and above it when it would run off the bottom. A
+    // session only on the ring opens under the ring. The card may hang over the card's
+    // own padding and heading, but never past them.
+    func cardCenter(for id: UUID, size card: CGSize) -> CGPoint {
+        let half = card.width / 2
+        let lowest = size.height + 14
+        let highest: CGFloat = -30
+        let x: CGFloat
+        let top: CGFloat
+        if let pill = pills.first(where: { $0.id == id }) {
+            x = pill.left ? pill.frame.minX + half : pill.frame.maxX - half
+            let below = pill.frame.maxY + 6 + card.height <= lowest
+            top = below ? pill.frame.maxY + 6 : pill.frame.minY - 6 - card.height
+        } else {
+            x = hub.x
+            top = hub.y + Self.projectRingRadius + 10
+        }
+        return CGPoint(x: min(max(x, half + 10), size.width - half - 10),
+                       y: max(min(top, lowest - card.height), highest) + card.height / 2)
+    }
+}
+
+// When each part of the orbit arrives as it builds itself up, in seconds from the start:
+// the ring from the top down both sides, then the wires out to each project and its tile,
+// then the wires on to each session and its pill, and only then the moving dashes.
+struct OrbitOpening {
+    let ringDone: Double
+    private let pillCount: Int
+
+    init(layout: OrbitLayout) {
+        ringDone = Double(layout.steps) * 0.055 + 0.45
+        pillCount = layout.pills.count
+    }
+
+    func arc(_ step: Int) -> Double { Double(step) * 0.055 }
+    func projectRing(_ index: Int) -> Double { max(0, ringDone - 0.3) + Double(index) * 0.04 }
+    func tile(_ index: Int) -> Double { ringDone + 0.38 + Double(index) * 0.07 }
+    func pill(_ index: Int) -> Double { leaves + 0.2 + Double(index) * 0.045 }
+    var more: Double { leaves + 0.4 }
+    var flow: Double { pill(pillCount) + 0.3 }
+
+    func wire(_ wire: OrbitLayout.Wire) -> Double {
+        wire.trunk ? ringDone + Double(wire.order) * 0.07 : leaves + Double(wire.order) * 0.045
+    }
+
+    private var leaves: Double { ringDone + 0.6 }
+
+    static let draw = Animation.timingCurve(0.3, 0.7, 0.2, 1, duration: 0.6)
+    static let slide = Animation.timingCurve(0.2, 0.8, 0.2, 1, duration: 0.5)
+    static let pop = Animation.spring(response: 0.5, dampingFraction: 0.6)
+}
+
+// What the pointer is resting on. That session or project stays lit, with everything that
+// leads to it, and the rest of the map dims.
+enum OrbitSpotlight: Equatable {
+    case session(UUID, group: UUID)
+    case project(UUID)
+
+    func lights(group: UUID?, session: UUID?) -> Bool {
+        switch self {
+        case .project(let id):
+            return group == id
+        case .session(let id, let owner):
+            if let session { return session == id }
+            return group == owner
+        }
+    }
+
+    static func opacity(_ spotlight: OrbitSpotlight?, group: UUID?, session: UUID? = nil) -> Double {
+        spotlight?.lights(group: group, session: session) == false ? 0.2 : 1
     }
 }
 
@@ -242,10 +415,11 @@ struct RailMap: View {
                 .position(layout.hub)
 
             ForEach(layout.nodes) { node in
-                OrbitProjectTile(group: node.group)
+                OrbitTileFace(group: node.group, hovering: false)
+                    .accessibilityHidden(true)
                     .position(node.center)
-                OrbitTileName(name: node.group.identity.containerName, width: RailLayout.nameWidth)
-                    .position(x: node.center.x, y: node.center.y + OrbitTileName.offset)
+                let name = OrbitTileName(name: node.group.identity.containerName, width: RailLayout.nameWidth)
+                name.position(name.center(under: node.center))
             }
 
             ForEach(layout.rows) { row in
@@ -261,101 +435,156 @@ struct RailMap: View {
     }
 }
 
-// The work map drawn around a hub whose ring has one arc for every session. Projects sit
-// on either side with their sessions beside them, and a session that needs you grows
-// larger and turns amber. Clicking a session opens its card, where a request can be
-// answered without leaving Home.
+// The work map drawn around a ring with one arc for every session. Projects sit on either
+// side with their sessions beside them, and a session that needs you grows taller and
+// turns amber. Clicking a session, on its pill or its arc, opens its card, where a
+// request can be answered without leaving Home.
 struct OrbitMap: View {
     let map: HomeWorkMap
     let width: CGFloat
     let hasChanges: (HomeLive) -> Bool
+    let workTime: (HomeLive) -> TimeInterval
     let open: (HomeLive, SessionDestination) -> Void
     let answer: (HomeLive, PermissionAnswer) -> Void
     let reveal: (HomeWorkMap.Group) -> Void
+    let onOpened: () -> Void
 
+    @Environment(ProjectStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var selected: UUID?
-    @State private var cardHeight: CGFloat = 190
+    @State private var cardHeight: CGFloat = 240
+    @State private var pointed: OrbitSpotlight?
+    // False only until a map that opens has appeared. Everything on the map reads it,
+    // each part with its own delay, so the opening is one change played in order.
+    @State private var built: Bool
+
+    init(map: HomeWorkMap, width: CGFloat, hasChanges: @escaping (HomeLive) -> Bool,
+         workTime: @escaping (HomeLive) -> TimeInterval,
+         open: @escaping (HomeLive, SessionDestination) -> Void,
+         answer: @escaping (HomeLive, PermissionAnswer) -> Void,
+         reveal: @escaping (HomeWorkMap.Group) -> Void,
+         opening: Bool, onOpened: @escaping () -> Void) {
+        self.map = map
+        self.width = width
+        self.hasChanges = hasChanges
+        self.workTime = workTime
+        self.open = open
+        self.answer = answer
+        self.reveal = reveal
+        self.onOpened = onOpened
+        _built = State(initialValue: !opening)
+    }
 
     var body: some View {
         let layout = OrbitLayout(map: map, width: width)
+        let opening = OrbitOpening(layout: layout)
+        // Pointing at a project in the sidebar lights it here too.
+        let spotlight = pointed ?? store.pointedSidebarItem.map(OrbitSpotlight.project)
         ZStack(alignment: .topLeading) {
             Color.clear
                 .contentShape(Rectangle())
                 .onTapGesture { selected = nil }
 
-            // Two faint orbits, sized from the map so they keep its shape at any height.
-            Group {
-                Ellipse()
-                    .stroke(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    .frame(width: 380, height: min(220, layout.size.height - 28))
-                Ellipse()
-                    .stroke(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                    .frame(width: min(760, width - 40), height: layout.size.height - 8)
-            }
-            .position(layout.hub)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+            OrbitWires(wires: layout.wires, built: built, opening: opening, spotlight: spotlight)
 
-            OrbitWires(wires: layout.wires)
-
-            OrbitHub(map: map)
+            OrbitRing(layout: layout, map: map, built: built, opening: opening, spotlight: spotlight,
+                      select: { toggle($0) }, point: { point($0, at: $1) })
                 .position(layout.hub)
 
-            ForEach(layout.nodes) { node in
-                OrbitProjectTile(group: node.group)
+            ForEach(Array(layout.nodes.enumerated()), id: \.element.id) { index, node in
+                let group = node.group
+                OrbitProjectTile(group: group, built: built,
+                                 entrance: step(opening.tile(index), OrbitOpening.pop)) {
+                    reveal(group)
+                } point: { point(.project(group.id), at: $0) }
                     .position(node.center)
-                OrbitTileName(name: node.group.identity.containerName, width: OrbitLayout.nameWidth)
-                    .position(x: node.center.x, y: node.center.y + OrbitTileName.offset)
+                // Long names wrap rather than cut off, and spill a little into the gap
+                // between rows.
+                let name = OrbitTileName(name: group.identity.containerName, width: OrbitLayout.nameWidth,
+                                         lines: 2)
+                name
+                    .opacity(built ? 1 : 0)
+                    .animation(step(opening.tile(index), OrbitOpening.slide), value: built)
+                    .position(name.center(under: node.center))
+                    .opacity(OrbitSpotlight.opacity(spotlight, group: group.id))
             }
 
-            ForEach(layout.pills) { pill in
-                OrbitSessionPill(live: pill.live, selected: selected == pill.id) {
-                    selected = selected == pill.id ? nil : pill.id
-                }
-                .frame(width: pill.frame.width, height: pill.frame.height)
-                .position(x: pill.frame.midX, y: pill.frame.midY)
+            ForEach(Array(layout.pills.enumerated()), id: \.element.id) { index, pill in
+                let live = pill.live
+                OrbitSessionPill(live: live, selected: selected == pill.id, left: pill.left, built: built,
+                                 entrance: step(opening.pill(index), OrbitOpening.slide)) {
+                    toggle(live.id)
+                } point: { point(.session(live.id, group: live.containerID), at: $0) }
+                    .frame(width: pill.frame.width, height: pill.frame.height)
+                    .position(x: pill.frame.midX, y: pill.frame.midY)
+                    .opacity(OrbitSpotlight.opacity(spotlight, group: live.containerID, session: live.id))
             }
 
             ForEach(layout.more) { more in
                 OrbitMoreChip(more: more) { reveal(more.group) }
+                    .opacity(built ? 1 : 0)
+                    .offset(x: built ? 0 : (more.left ? 14 : -14))
+                    .animation(step(opening.more, OrbitOpening.slide), value: built)
                     .frame(width: more.frame.width, height: more.frame.height)
                     .position(x: more.frame.midX, y: more.frame.midY)
+                    .opacity(OrbitSpotlight.opacity(spotlight, group: more.group.id))
             }
 
-            if let selected, let pill = layout.pills.first(where: { $0.id == selected }) {
-                card(for: pill, in: layout)
+            if let selected, let live = map.active.first(where: { $0.id == selected }) {
+                card(for: live, in: layout)
             }
         }
         .frame(width: layout.size.width, height: layout.size.height)
         .motion(HomeWorkMapView.reflow, value: layout.motionKey)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: spotlight)
         .onExitCommand { selected = nil }
+        .onAppear {
+            built = true
+            onOpened()
+        }
     }
 
-    // Under the session when it fits, above it when it would run off the bottom. The map
-    // can be shorter than the card, so the card may hang over the card's own padding and
-    // heading, but never past them.
-    private func card(for pill: OrbitLayout.Pill, in layout: OrbitLayout) -> some View {
-        let half = OrbitSessionCard.width / 2
-        let x = min(max(pill.frame.midX, half + 10), layout.size.width - half - 10)
-        let lowest = layout.size.height + 14
-        let highest: CGFloat = -30
-        let below = pill.frame.maxY + 10 + cardHeight <= lowest
-        let top = below ? pill.frame.maxY + 10 : pill.frame.minY - 10 - cardHeight
-        let y = max(min(top, lowest - cardHeight), highest) + cardHeight / 2
-        let live = pill.live
+    // A part of the opening, or nothing when motion is reduced and the map simply appears.
+    private func step(_ delay: Double, _ animation: Animation) -> Animation? {
+        reduceMotion ? nil : animation.delay(delay)
+    }
+
+    private func toggle(_ id: UUID) {
+        selected = selected == id ? nil : id
+    }
+
+    // A pointer leaving one shape can land on the next before the first one hears about
+    // it, so leaving only clears what that shape set.
+    private func point(_ spotlight: OrbitSpotlight, at hovering: Bool) {
+        if hovering {
+            pointed = spotlight
+        } else if pointed == spotlight {
+            pointed = nil
+        }
+    }
+
+    private func card(for live: HomeLive, in layout: OrbitLayout) -> some View {
+        let close = { selected = nil }
         return OrbitSessionCard(
             live: live,
             hasChanges: hasChanges(live),
+            workTime: workTime(live),
             open: { destination in
-                selected = nil
+                close()
                 open(live, destination)
             },
             answer: { given in
-                selected = nil
+                close()
                 answer(live, given)
-            })
+            },
+            reveal: {
+                close()
+                if let group = map.groups.first(where: { $0.id == live.containerID }) { reveal(group) }
+            },
+            close: close)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
-            .position(x: x, y: y)
+            .position(layout.cardCenter(for: live.id,
+                                        size: CGSize(width: OrbitSessionCard.width, height: cardHeight)))
             .zIndex(2)
             .transition(.opacity)
     }
@@ -364,15 +593,24 @@ struct OrbitMap: View {
 private struct OrbitTileName: View {
     let name: String
     let width: CGFloat
+    var lines = 1
 
-    // From the middle of a tile to the middle of the name under it.
-    static let offset: CGFloat = OrbitLayout.tileSide / 2 + 18
+    // From the middle of a tile to the top of the name under it.
+    static let gap: CGFloat = OrbitLayout.tileSide / 2 + 10
+    private static let lineHeight: CGFloat = 14
+
+    // Where to put the name's middle so its first line sits the same distance under the tile
+    // whatever the number of lines.
+    func center(under tile: CGPoint) -> CGPoint {
+        CGPoint(x: tile.x, y: tile.y + Self.gap + CGFloat(lines) * Self.lineHeight / 2)
+    }
 
     var body: some View {
         Text(name)
             .font(.system(size: 11.5, weight: .semibold))
-            .lineLimit(1)
-            .frame(width: width)
+            .multilineTextAlignment(.center)
+            .lineLimit(lines)
+            .frame(width: width, height: CGFloat(lines) * Self.lineHeight, alignment: .top)
     }
 }
 
@@ -403,28 +641,61 @@ private struct OrbitMoreChip: View {
 }
 
 
-// The lines from the hub to each project and on to its sessions. A line flows while what
+// The lines from the ring to each project and on to its sessions. A line flows while what
 // it leads to is running, and stands still otherwise, so motion on the map always means
 // work is happening. The flow is played by Core Animation, so a map full of running work
 // costs nothing between frames.
 private struct OrbitWires: View {
     let wires: [OrbitLayout.Wire]
+    var built = true
+    // When each wire grows, for a map that builds itself up.
+    var opening: OrbitOpening?
+    var spotlight: OrbitSpotlight?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let flowing = reduceMotion ? [] : wires.filter { $0.kind == .running }
+        let lit = flowing.filter { OrbitSpotlight.opacity(spotlight, group: $0.group, session: $0.session) == 1 }
+        let dim = flowing.filter { OrbitSpotlight.opacity(spotlight, group: $0.group, session: $0.session) < 1 }
         ZStack {
-            ForEach(wires.filter { reduceMotion || $0.kind != .running }) { wire in
-                MapConnector(start: wire.start, end: wire.end)
+            ForEach(wires) { wire in
+                let flows = !reduceMotion && wire.kind == .running
+                wire.connector
+                    .trim(from: 0, to: built ? 1 : 0)
                     .stroke(Self.colour(wire.kind), style: Self.style(wire))
+                    .animation(reduceMotion ? nil : OrbitOpening.draw.speed(1.2).delay(opening?.wire(wire) ?? 0),
+                               value: built)
+                    // A running line grows like the others, then hands over to its flow.
+                    .opacity(flows && built ? 0 : 1)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.5).delay(opening?.flow ?? 0), value: built)
+                    .opacity(OrbitSpotlight.opacity(spotlight, group: wire.group, session: wire.session))
             }
-            if !flowing.isEmpty {
-                FlowingWires(wires: flowing, colour: Self.colour(.running))
+            Group {
+                if !lit.isEmpty {
+                    FlowingWires(paths: Self.paths(lit), colour: Self.colour(.running))
+                }
+                if !dim.isEmpty {
+                    FlowingWires(paths: Self.paths(dim), colour: Self.colour(.running))
+                        .opacity(0.2)
+                }
             }
+            .opacity(built ? 1 : 0)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.5).delay(opening?.flow ?? 0), value: built)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    // One path for each line width, since a layer strokes every line it holds the same.
+    static func paths(_ wires: [OrbitLayout.Wire]) -> [CGFloat: CGPath] {
+        Dictionary(grouping: wires, by: width).mapValues { group in
+            let path = CGMutablePath()
+            for wire in group {
+                path.addPath(wire.connector.path(in: .zero).cgPath)
+            }
+            return path as CGPath
+        }
     }
 
     static func colour(_ kind: OrbitLayout.Wire.Kind) -> Color {
@@ -441,36 +712,41 @@ private struct OrbitWires: View {
         let width = width(wire)
         return switch wire.kind {
         case .attention: StrokeStyle(lineWidth: width)
-        case .running: StrokeStyle(lineWidth: width, lineCap: .round, dash: FlowingWiresView.dash)
+        case .running: StrokeStyle(lineWidth: width, lineCap: .round, dash: FlowingWiresView.wireDash)
         case .quiet: StrokeStyle(lineWidth: width, dash: [2, 4])
         }
     }
 }
 
-private struct FlowingWires: NSViewRepresentable {
-    let wires: [OrbitLayout.Wire]
+struct FlowingWires: NSViewRepresentable {
+    let paths: [CGFloat: CGPath]
     let colour: Color
+    var dash = FlowingWiresView.wireDash
+    var period = FlowingWiresView.wirePeriod
 
-    func makeNSView(context: Context) -> FlowingWiresView { FlowingWiresView() }
+    func makeNSView(context: Context) -> FlowingWiresView {
+        FlowingWiresView(dash: dash, period: period)
+    }
 
     func updateNSView(_ view: FlowingWiresView, context: Context) {
-        let paths = Dictionary(grouping: wires, by: OrbitWires.width).mapValues { group in
-            let path = CGMutablePath()
-            for wire in group {
-                path.addPath(MapConnector(start: wire.start, end: wire.end).path(in: .zero).cgPath)
-            }
-            return path as CGPath
-        }
         view.update(paths: paths, colour: colour.resolve(in: context.environment).cgColor)
     }
 }
 
 final class FlowingWiresView: LoopLayerView {
-    static let dash: [CGFloat] = [2, 6]
-    private static let flowPeriod: TimeInterval = 0.48
+    static let wireDash: [CGFloat] = [2, 6]
+    static let wirePeriod: TimeInterval = 0.48
 
+    private let dash: [CGFloat]
+    private let period: TimeInterval
     // One layer for each line width, since a layer strokes every line it holds the same.
     private var lines: [CGFloat: CAShapeLayer] = [:]
+
+    init(dash: [CGFloat], period: TimeInterval) {
+        self.dash = dash
+        self.period = period
+        super.init(frame: .zero)
+    }
 
     func update(paths: [CGFloat: CGPath], colour: CGColor) {
         LayerLoop.still {
@@ -499,7 +775,7 @@ final class FlowingWiresView: LoopLayerView {
         line.fillColor = nil
         line.lineWidth = width
         line.lineCap = .round
-        line.lineDashPattern = Self.dash.map { NSNumber(value: Double($0)) }
+        line.lineDashPattern = dash.map { NSNumber(value: Double($0)) }
         line.frame = bounds
         line.contentsScale = window?.backingScaleFactor ?? 2
         layer?.addSublayer(line)
@@ -508,13 +784,13 @@ final class FlowingWiresView: LoopLayerView {
         return line
     }
 
-    // The dashes travel one whole pattern each period, out from the hub.
+    // The dashes travel one whole pattern each period, along the way the path was drawn.
     private func flow(_ line: CAShapeLayer) {
         let flow = CABasicAnimation(keyPath: "lineDashPhase")
         flow.fromValue = 0
-        flow.toValue = -Self.dash.reduce(0, +)
-        flow.duration = Self.flowPeriod
-        line.add(LayerLoop.repeating(flow, period: Self.flowPeriod), forKey: "flow")
+        flow.toValue = -dash.reduce(0, +)
+        flow.duration = period
+        line.add(LayerLoop.repeating(flow, period: period), forKey: "flow")
     }
 }
 
@@ -622,10 +898,12 @@ struct OrbitHub: View {
     }
 }
 
-// One arc of the hub's ring, given as fractions of a turn starting at the top.
-private struct HubArc: Shape {
+// One arc of the hub's ring, given as fractions of a turn starting at the top. A reversed
+// arc is drawn from its end back to its start, so it can be grown anticlockwise.
+struct HubArc: Shape {
     var start: CGFloat
     var end: CGFloat
+    var reversed = false
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get { AnimatablePair(start, end) }
@@ -633,90 +911,170 @@ private struct HubArc: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
+        let startAngle = Angle.degrees(Double(start) * 360 - 90)
+        let endAngle = Angle.degrees(Double(end) * 360 - 90)
         var path = Path()
         path.addArc(center: CGPoint(x: rect.midX, y: rect.midY), radius: rect.width / 2,
-                    startAngle: .degrees(Double(start) * 360 - 90),
-                    endAngle: .degrees(Double(end) * 360 - 90),
-                    clockwise: false)
+                    startAngle: reversed ? endAngle : startAngle,
+                    endAngle: reversed ? startAngle : endAngle,
+                    clockwise: reversed)
         return path
     }
 }
 
-private struct OrbitProjectTile: View {
+private struct OrbitTileFace: View {
     let group: HomeWorkMap.Group
+    let hovering: Bool
 
     var body: some View {
         let identity = group.identity
+        let halo = RoundedRectangle(cornerRadius: 19)
         SidebarIdentityTile(avatar: identity.avatar, name: identity.containerName, tint: identity.tint,
                             stacked: identity.session.workspaceID != nil, side: OrbitLayout.tileSide)
             .background {
-                RoundedRectangle(cornerRadius: 19)
+                halo
                     .fill(Theme.card)
-                    .overlay(RoundedRectangle(cornerRadius: 19).stroke(Theme.hairline))
+                    .overlay(halo.stroke(hovering ? identity.tint.colour.opacity(0.5) : Theme.hairline))
                     .padding(-6)
             }
-            .accessibilityHidden(true)
+    }
+}
+
+// A project on the map. Clicking it shows the project in the sidebar, where every one of
+// its sessions is listed.
+private struct OrbitProjectTile: View {
+    let group: HomeWorkMap.Group
+    let built: Bool
+    let entrance: Animation?
+    let action: () -> Void
+    let point: (Bool) -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        let identity = group.identity
+        let halo = RoundedRectangle(cornerRadius: 19)
+        Button(action: action) {
+            OrbitTileFace(group: group, hovering: hovering)
+                .contentShape(halo.inset(by: -6))
+                // The pop is drawn inside the button, so the button itself is never scaled.
+                .scaleEffect(built ? 1 : 0.55)
+                .opacity(built ? 1 : 0)
+                .animation(entrance, value: built)
+        }
+        .buttonStyle(.plain)
+        .onHover {
+            hovering = $0
+            point($0)
+        }
+        .accessibilityLabel("\(identity.containerName), \(counted(group.sessions.count, "session"))")
+        .accessibilityHint("Shows \(identity.containerName) in the sidebar")
     }
 }
 
 private struct OrbitSessionPill: View {
     let live: HomeLive
     let selected: Bool
+    let left: Bool
+    let built: Bool
+    let entrance: Animation?
     let action: () -> Void
+    let point: (Bool) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
     @State private var pings = 0
+    @State private var settles = 0
+
+    private static let cornerRadius: CGFloat = 10
 
     var body: some View {
         let needs = live.needsAttention
-        let shape = RoundedRectangle(cornerRadius: needs ? 13 : 16)
+        let shape = RoundedRectangle(cornerRadius: Self.cornerRadius)
         Button(action: action) {
-            HStack(spacing: 8) {
-                MapLight(tone: live.tone)
-                if needs {
-                    VStack(alignment: .leading, spacing: 2) {
-                        title
-                        Text(live.status)
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(Theme.attentionText)
-                    }
-                } else {
-                    title
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 9) {
+                    MapLight(tone: live.tone)
+                    Text(live.session.title)
+                        .font(.system(size: 12, weight: needs ? .semibold : .medium))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(live.session.agent.title)
+                        .font(.mono(10.5))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .fixedSize()
                 }
-                Spacer(minLength: 0)
+                if needs {
+                    request
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.attentionText)
+                        .lineLimit(1)
+                        .padding(.leading, 16)
+                }
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 13)
+            .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background {
                 shape.fill(Theme.card)
                 if needs { shape.fill(Theme.attention.opacity(0.09)) }
             }
-            .overlay(shape.stroke(border, lineWidth: selected ? 2 : 1))
+            .overlay(shape.stroke(border, lineWidth: selected || (needs && hovering) ? 1.5 : 1))
             .shadow(color: (needs ? Theme.attention : .black).opacity(needs ? 0.22 : 0.1), radius: 8, y: 5)
             .contentShape(shape)
+            // The slide is drawn inside the button, so the button itself never moves.
+            .offset(x: built ? 0 : (left ? 14 : -14))
+            .opacity(built ? 1 : 0)
+            .animation(entrance, value: built)
         }
         .buttonStyle(.plain)
-        .onHover { hovering = $0 }
-        .overlay { PingRing(trigger: pings, cornerRadius: needs ? 13 : 16) }
+        .onHover {
+            hovering = $0
+            point($0)
+        }
+        .overlay { PingRing(trigger: pings, cornerRadius: Self.cornerRadius, pulses: 2) }
+        .overlay { PingRing(trigger: settles, cornerRadius: Self.cornerRadius, colour: Theme.dotOn) }
         .onChange(of: needs) { _, now in
-            if now && !reduceMotion { pings += 1 }
+            guard !reduceMotion else { return }
+            if now { pings += 1 } else { settles += 1 }
         }
         .accessibilityLabel("\(live.session.title), \(live.status), \(live.containerName)")
         .accessibilityHint("Shows this session's card")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
-    private var title: some View {
-        Text(live.session.title)
-            .font(.system(size: 12, weight: .medium))
-            .lineLimit(1)
+    // What the session is asking for, or what it has left to review.
+    @ViewBuilder private var request: some View {
+        if let permission = live.permission {
+            if let question = permission.questions.first {
+                Text(question.text)
+            } else {
+                let subject = permission.subject.components(separatedBy: .newlines).first ?? ""
+                if permission.subjectIsMarkdown || subject.isEmpty {
+                    Text(permission.title)
+                } else {
+                    Text("\(permission.title) ")
+                        + Text(subject).font(.mono(10.5)).foregroundStyle(Color.primary)
+                }
+            }
+        } else if live.finished {
+            let summary = live.session.summary
+            HStack(spacing: 6) {
+                Text("Ready to review")
+                if summary.added > 0 || summary.removed > 0 {
+                    DiffPair(added: summary.added, removed: summary.removed, size: 10.5, spacing: 4)
+                }
+            }
+        } else {
+            Text(live.status)
+        }
     }
 
     private var border: Color {
+        if live.needsAttention {
+            return selected || hovering ? Theme.attention : Theme.attention.opacity(0.55)
+        }
         if selected { return Theme.accent }
-        if live.needsAttention { return Theme.attention.opacity(0.55) }
         return hovering ? Theme.accent.opacity(0.45) : Theme.border
     }
 }
@@ -737,150 +1095,34 @@ struct MapLight: View {
     }
 }
 
-// A single ring that swells and fades when a session starts asking for something. It
-// plays once per request rather than looping, so it marks the moment without nagging.
+// A ring that swells and fades around a pill: amber, twice, when a session starts asking
+// for something, and green, once, when the request is answered. It plays per change
+// rather than looping, so it marks the moment without nagging.
 private struct PingRing: View {
     let trigger: Int
     let cornerRadius: CGFloat
+    var colour = Theme.attention
+    var pulses = 1
 
-    private struct Frame {
-        var scale: CGFloat = 1
-        var opacity: Double = 0
-    }
+    private static let pulse: Double = 1.1
 
     var body: some View {
         RoundedRectangle(cornerRadius: cornerRadius + 6)
-            .stroke(Theme.attention, lineWidth: 2)
+            .stroke(colour, lineWidth: 2)
             .padding(-6)
-            .keyframeAnimator(initialValue: Frame(), trigger: trigger) { ring, frame in
-                ring.scaleEffect(frame.scale).opacity(frame.opacity)
+            .keyframeAnimator(initialValue: Double(0), trigger: trigger) { ring, phase in
+                // Each whole number of the phase is one pulse; at rest it sits on a whole number.
+                let progress = phase - phase.rounded(.down)
+                let resting = phase <= 0 || phase >= Double(pulses)
+                ring.scaleEffect(0.96 + 0.22 * (1 - pow(1 - progress, 3)))
+                    .opacity(resting ? 0 : 0.9 * (1 - progress))
             } keyframes: { _ in
-                KeyframeTrack(\.scale) {
-                    MoveKeyframe(0.96)
-                    CubicKeyframe(1.18, duration: 1.1)
-                }
-                KeyframeTrack(\.opacity) {
-                    MoveKeyframe(0.9)
-                    LinearKeyframe(0, duration: 1.1)
+                KeyframeTrack {
+                    MoveKeyframe(0)
+                    LinearKeyframe(Double(pulses), duration: Self.pulse * Double(pulses))
                 }
             }
             .allowsHitTesting(false)
             .accessibilityHidden(true)
-    }
-}
-
-// What opens beside a session on the orbit map: what it is doing or asking, and the
-// buttons to answer it from here.
-private struct OrbitSessionCard: View {
-    let live: HomeLive
-    let hasChanges: Bool
-    let open: (SessionDestination) -> Void
-    let answer: (PermissionAnswer) -> Void
-
-    static let width: CGFloat = 300
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 7) {
-                ProjectDot(tint: live.tint, size: 7)
-                Text(live.containerName.uppercased())
-                    .font(.mono(10.5))
-                    .kerning(0.6)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                Text(live.session.agent.title)
-                    .font(.mono(10.5))
-                    .foregroundStyle(.tertiary)
-            }
-            Text(live.session.title)
-                .font(.system(size: 14, weight: .semibold))
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 8)
-            TimelineView(.periodic(from: .now, by: 30)) { _ in
-                Text(statusLine)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.top, 4)
-            request
-                .font(.system(size: 12))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 9).fill(Theme.sunken))
-                .padding(.top, 10)
-            actions.padding(.top, 12)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .frame(width: Self.width, alignment: .leading)
-        .floatingCard(cornerRadius: 14)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(live.session.title)
-    }
-
-    private var statusLine: String {
-        guard let permission = live.permission else { return live.status }
-        return "\(live.status) for \(RelativeTime.duration(since: permission.askedAt))"
-    }
-
-    @ViewBuilder private var request: some View {
-        if let permission = live.permission {
-            if let question = permission.questions.first {
-                Text(question.text).lineLimit(4)
-            } else {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(permission.title).foregroundStyle(.secondary)
-                    Text(permission.subjectIsMarkdown
-                         ? permission.subject.components(separatedBy: .newlines).first ?? ""
-                         : permission.subject)
-                        .font(.mono(11.5))
-                        .lineLimit(3)
-                }
-            }
-        } else if live.finished {
-            let summary = live.session.summary
-            HStack(spacing: 6) {
-                Text("Finished.")
-                if summary.added > 0 || summary.removed > 0 {
-                    DiffPair(added: summary.added, removed: summary.removed, size: 11, spacing: 4)
-                }
-            }
-        } else {
-            Text(live.activity).lineLimit(2)
-        }
-    }
-
-    @ViewBuilder private var actions: some View {
-        let quick = live.quickAnswers
-        let primary = live.primaryAction(hasChanges: hasChanges)
-        HStack(spacing: 6) {
-            if !quick.isEmpty {
-                ForEach(quick.indices, id: \.self) { index in
-                    ActionButton(title: quick[index].title, tone: index == 0 ? .green : .outlined,
-                                 height: 26, size: 12) { answer(quick[index].answer) }
-                }
-                Spacer(minLength: 4)
-                InlineLink(title: "Open session") { open(live.destination) }
-            } else if live.needsAttention {
-                ActionButton(title: primary.title, tone: .green, height: 26, size: 12) {
-                    open(primary.destination)
-                }
-                Spacer(minLength: 4)
-                if primary.destination != live.destination {
-                    InlineLink(title: "Open session") { open(live.destination) }
-                }
-            } else {
-                ActionButton(title: primary.title, tone: .outlined, height: 26, size: 12) {
-                    open(primary.destination)
-                }
-                Spacer(minLength: 4)
-                Text(RelativeTime.short(live.session.lastActivity))
-                    .font(.mono(10.5))
-                    .foregroundStyle(.tertiary)
-            }
-        }
     }
 }
