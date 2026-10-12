@@ -1412,7 +1412,8 @@ final class SessionRunner {
         """
 
     nonisolated static func designSystemPrompt(artifactURL: URL,
-                                               canvasWidth: Double? = nil) -> String {
+                                               canvasWidth: Double? = nil,
+                                               ambition: DesignAmbition = .fallback) -> String {
         // Without a number the agent has nothing to check its layout against, and a made-up
         // one would be worse than silence, so the paragraph is dropped when the canvas is
         // not on screen to report its width.
@@ -1484,11 +1485,7 @@ final class SessionRunner {
         asks to move from design into implementation. Treat follow-up prompts as revisions \
         to the current canvas rather than unrelated new files.
 
-        Ground the design in what the product is, who uses it, and the job the screen \
-        does. When the design extends an existing product, its established palette, type, \
-        spacing, and components win over any new idea. When there is nothing to match, \
-        pick a palette and typefaces that belong to this subject rather than ones that \
-        would fit anything.
+        \(designGrounding(ambition))
 
         Generated design clusters around a few looks. They are defaults rather than \
         choices, so do not spend a free decision on one: a cream background with a serif \
@@ -1498,15 +1495,86 @@ final class SessionRunner {
         meta strings, spaced em dashes, tinted near-black, monospace data labels, and a \
         trailing arrow on every link. When the user asks for one of these, give it to them.
 
-        Let one element carry the design and keep the rest quiet. Borders, dividers, \
-        numbers, and labels have to encode something real, so number things only when the \
-        content is a sequence. Keep motion for what answers the user's action, plus at \
-        most one deliberate reveal.
+        \(designEmphasis(ambition))
 
         Words are design content. Name things the way a user would say them, write a \
         button as the action it performs, keep that name through the flow, and make errors \
         and empty states say what to do next.
         """
+    }
+
+    // The paragraphs that set how far a design goes. Everything else in the Design prompt
+    // is the same at every level, so a level only ever changes the taste it asks for.
+    private nonisolated static func designGrounding(_ ambition: DesignAmbition) -> String {
+        switch ambition {
+        case .restrained:
+            """
+            Ground the design in what the product is, who uses it, and the job the screen \
+            does. When the design extends an existing product, its established palette, type, \
+            spacing, and components win over any new idea. Add no component, colour, or visual \
+            idea the product does not already have, so the result can be built from what \
+            exists, and keep the change as small as the request allows. When there is nothing \
+            to match, use a calm palette and plain, readable typefaces that suit this subject.
+            """
+        case .balanced:
+            """
+            Ground the design in what the product is, who uses it, and the job the screen \
+            does. When the design extends an existing product, its established palette, type, \
+            spacing, and components win over any new idea, and the job is to show that product \
+            at its best. When there is nothing to match, pick a palette and typefaces that \
+            belong to this subject rather than ones that would fit anything.
+
+            Hold the result to the standard of finished product work, not a sketch. Set a \
+            deliberate type scale and spacing rhythm and keep alignment exact. Fill the screens \
+            with realistic content in realistic amounts, including long names and empty, \
+            loading, and error states where they apply. Give every interactive element its \
+            hover, focus, pressed, and disabled states. Put the effort into finish rather than \
+            decoration: an adequate mockup is not done, and neither is a busy one.
+            """
+        case .allOut:
+            """
+            Treat this design as a showcase piece: the work a senior product designer would \
+            put in their portfolio. Go all out. Ground it in what the product is, who uses it, \
+            and the job the screen does. When the design extends an existing product, build on \
+            its palette, type, spacing, and components and raise the polish within that \
+            language rather than replacing it, so it reads as the same product at its very \
+            best and can still be built. When there is nothing to match, choose a bold, \
+            distinctive direction that belongs to this subject and would not fit anything else.
+
+            Put the effort into craft. Set a deliberate type scale and spacing rhythm and keep \
+            alignment exact. Fill the screens with rich, realistic content in realistic amounts, \
+            including long names and empty, loading, and error states where they apply. Give \
+            every interactive element its hover, focus, pressed, selected, and disabled states. \
+            A plain or merely adequate result is not done.
+            """
+        }
+    }
+
+    private nonisolated static func designEmphasis(_ ambition: DesignAmbition) -> String {
+        switch ambition {
+        case .restrained:
+            """
+            Let one element carry the design and keep the rest quiet. Borders, dividers, \
+            numbers, and labels have to encode something real, so number things only when the \
+            content is a sequence. Keep motion for what answers the user's action, with no \
+            entrance or reveal animations.
+            """
+        case .balanced:
+            """
+            Let one element carry the design and keep the rest quiet. Borders, dividers, \
+            numbers, and labels have to encode something real, so number things only when the \
+            content is a sequence. Keep motion for what answers the user's action, plus at \
+            most one deliberate reveal.
+            """
+        case .allOut:
+            """
+            Give the design one clear lead, and let the supporting parts be richly made rather \
+            than plain. Borders, dividers, numbers, and labels still have to encode something \
+            real, so number things only when the content is a sequence. Use motion to make the \
+            design feel alive: smooth transitions between states and a few deliberate reveals, \
+            all of which stop when the user asks for reduced motion.
+            """
+        }
     }
 
     nonisolated static func implementationSystemPrompt(referenceURL: URL) -> String {
@@ -2035,7 +2103,9 @@ final class SessionRunner {
             mcpConfigPath: mcpConfigURL?.path,
             additionalSystemPrompt: designArtifact.map {
                 Self.designSystemPrompt(artifactURL: $0,
-                                        canvasWidth: canvasWidths[session.id])
+                                        canvasWidth: canvasWidths[session.id],
+                                        ambition: DesignAmbition.valid(session.settings?.designAmbition)
+                                            ?? Preferences.designAmbition())
             } ?? implementationReference.map(Self.implementationSystemPrompt),
             suggestsPrompts: suggestsPrompts,
             discovered: discoveredModels[agent])

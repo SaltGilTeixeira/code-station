@@ -548,6 +548,14 @@ enum Preferences {
         store.set(textSize.rawValue, forKey: "textSize")
     }
 
+    static func designAmbition(in store: UserDefaults = .standard) -> DesignAmbition {
+        DesignAmbition.valid(store.string(forKey: "designAmbition")) ?? .fallback
+    }
+
+    static func setDesignAmbition(_ ambition: DesignAmbition, in store: UserDefaults = .standard) {
+        store.set(ambition.rawValue, forKey: "designAmbition")
+    }
+
     // The old catch-up preference maps directly to automatic recaps, so an existing opt-out
     // remains respected after the feature changes shape.
     static func sessionRecapsEnabled(in store: UserDefaults = .standard) -> Bool {

@@ -677,6 +677,51 @@ struct DesignSessionTests {
         #expect(unmeasured.contains(artifact.path))
     }
 
+    @Test func eachAmbitionChangesOnlyTheTasteTheAgentIsAskedFor() {
+        let artifact = URL(fileURLWithPath: "/tmp/code-station design/index.html")
+        let prompts = Dictionary(uniqueKeysWithValues: DesignAmbition.allCases.map {
+            ($0, SessionRunner.designSystemPrompt(artifactURL: artifact, ambition: $0))
+        })
+
+        // The canvas, files and stock looks are the same deal at every level.
+        for prompt in prompts.values {
+            #expect(prompt.contains(artifact.path))
+            #expect(prompt.contains("handoff.md"))
+            #expect(prompt.contains("Generated design clusters around a few looks"))
+            #expect(prompt.contains("Words are design content"))
+        }
+
+        let restrained = prompts[.restrained] ?? ""
+        #expect(restrained.contains("Add no component, colour, or visual idea"))
+        #expect(restrained.contains("no entrance or reveal animations"))
+        #expect(!restrained.contains("Go all out"))
+
+        let balanced = prompts[.balanced] ?? ""
+        #expect(balanced.contains("standard of finished product work"))
+        #expect(balanced.contains("at most one deliberate reveal"))
+        #expect(!balanced.contains("Go all out"))
+        #expect(SessionRunner.designSystemPrompt(artifactURL: artifact) == balanced)
+
+        let allOut = prompts[.allOut] ?? ""
+        #expect(allOut.contains("showcase piece"))
+        #expect(allOut.contains("Go all out"))
+        // Going big still means the same product, so the result can be built.
+        #expect(allOut.contains("raise the polish within that language rather than replacing it"))
+        #expect(!allOut.contains("keep the rest quiet"))
+    }
+
+    @Test func aSessionWithNoAmbitionFollowsTheAppDefault() throws {
+        let preferences = try #require(UserDefaults(suiteName: "design-ambition-\(UUID())"))
+        #expect(Preferences.designAmbition(in: preferences) == .balanced)
+
+        Preferences.setDesignAmbition(.allOut, in: preferences)
+        #expect(Preferences.designAmbition(in: preferences) == .allOut)
+
+        let older = try JSONDecoder().decode(SessionSettings.self, from: Data(#"{"model":"opus"}"#.utf8))
+        #expect(older.designAmbition == nil)
+        #expect(DesignAmbition.valid("unknown") == nil)
+    }
+
     @Test func implementationReceivesItsReferenceAsAPrivilegedInstruction() throws {
         let reference = URL(fileURLWithPath: "/tmp/approved design")
         let prompt = SessionRunner.implementationSystemPrompt(referenceURL: reference)

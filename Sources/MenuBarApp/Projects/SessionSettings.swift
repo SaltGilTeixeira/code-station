@@ -118,6 +118,8 @@ struct SessionSettings: Codable, Equatable, Sendable {
     var permissionMode: String?
     var codexSandboxMode: String?
     var copilotAccessMode: String?
+    // Only read by Design turns. Nil follows the app's Design default.
+    var designAmbition: String?
     var mcpServersEnabled: Bool?
     // An allowlist of managed servers for sessions that need a filtered MCP config.
     // Nil keeps using the agent's own configuration without filtering it.
@@ -213,6 +215,38 @@ enum CopilotAccessMode: String, CaseIterable {
 
     static func resolved(_ value: String?) -> Self {
         valid(value) ?? .workspace
+    }
+}
+
+// How far a Design turn pushes the look. The canvas, file and handoff rules are the same
+// at every level; only the taste the agent is asked for changes.
+enum DesignAmbition: String, CaseIterable, Identifiable {
+    case restrained
+    case balanced
+    case allOut = "all-out"
+
+    static let fallback: DesignAmbition = .balanced
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .restrained: "Restrained"
+        case .balanced: "Balanced"
+        case .allOut: "All out"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .restrained: "Stays close to the product as it is. Small changes that are easy to build."
+        case .balanced: "Matches the product and finishes every detail."
+        case .allOut: "Showcase quality. Bolder choices and richer motion."
+        }
+    }
+
+    static func valid(_ value: String?) -> Self? {
+        value.flatMap(Self.init(rawValue:))
     }
 }
 

@@ -153,7 +153,8 @@ struct DesignView: View {
                 VStack(spacing: 0) {
                     turnNotices(session)
                     designComposer(session)
-                    SessionRunSettingsControls(sessionID: sessionID, wraps: true)
+                    SessionRunSettingsControls(sessionID: sessionID, wraps: true,
+                                               showsDesignAmbition: true)
                         .padding(.horizontal, 14)
                         .padding(.bottom, 12)
                 }

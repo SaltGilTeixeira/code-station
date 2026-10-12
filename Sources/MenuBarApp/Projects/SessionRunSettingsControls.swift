@@ -5,14 +5,17 @@ import SwiftUI
 //
 // Each control shows its own state rather than only its name: the model by name, the
 // effort as a meter, and how much the agent asks before it acts as a shield coloured by
-// how far it is trusted.
+// how far it is trusted. Design adds how far the look is pushed, which means nothing to a
+// Chat turn and so is only shown there.
 struct SessionRunSettingsControls: View {
     @Environment(ProjectStore.self) private var store
     @Environment(SessionRunner.self) private var runner
     @Environment(DialogPresenter.self) private var dialogs
+    @Environment(AppSettings.self) private var appSettings
 
     let sessionID: UUID
     var wraps = false
+    var showsDesignAmbition = false
 
     var body: some View {
         if let session = store.session(sessionID) {
@@ -29,6 +32,7 @@ struct SessionRunSettingsControls: View {
                 case .codex: codexAccessControl(agent: agent)
                 case .copilot: copilotAccessControl(agent: agent)
                 }
+                if showsDesignAmbition { ambitionControl }
             }
             .task(id: agent) { await runner.discoverModels(for: agent) }
         }
@@ -143,6 +147,37 @@ struct SessionRunSettingsControls: View {
             }
             .appTooltip(override != nil ? "\(help) Overridden for this session." : help)
             .accessibilityLabel("Effort: \(title)")
+    }
+
+    // MARK: - Design ambition
+
+    private var ambitionControl: some View {
+        let override = DesignAmbition.valid(sessionSettings.designAmbition)
+        let appDefault = appSettings.designAmbition
+        let selected = override ?? appDefault
+        let help = "How far the design pushes the look. Takes effect from the next turn."
+
+        return AmbitionPill(ambition: selected)
+            .appMenu(edge: .top) {
+                var entries: [MenuEntry] = [
+                    .item("Use Code Station default (\(appDefault.title))",
+                          icon: "paintbrush.pointed", checked: override == nil) {
+                        changeSettings { $0.designAmbition = nil }
+                    },
+                    .separator,
+                ]
+                entries += DesignAmbition.allCases.map { ambition in
+                    MenuEntry.item(ambition.title, icon: "paintbrush.pointed",
+                                   iconTint: ambition == .allOut ? Theme.accent : nil,
+                                   checked: override == ambition,
+                                   subtitle: ambition.detail) {
+                        changeSettings { $0.designAmbition = ambition.rawValue }
+                    }
+                }
+                return entries
+            }
+            .appTooltip(override != nil ? "\(help) Overridden for this session." : help)
+            .accessibilityLabel("Design ambition: \(selected.title)")
     }
 
     // MARK: - Asks before
@@ -360,6 +395,38 @@ private struct EffortPill: View {
             }
         }
         .onChange(of: lit, initial: true) { _, now in previous = now }
+    }
+}
+
+// MARK: - Design ambition
+
+// All out takes the accent, as a loosened shield takes amber, so a session set to go big
+// shows it at a glance.
+private struct AmbitionPill: View {
+    let ambition: DesignAmbition
+
+    // The level as it was before this change, so the word rolls up as the ambition rises
+    // and down as it falls.
+    @State private var previous: DesignAmbition?
+
+    var body: some View {
+        let bold = ambition == .allOut
+        BarPill(fill: bold ? Theme.accent.opacity(0.14) : Theme.field) {
+            HStack(spacing: 6) {
+                Image(systemName: "paintbrush.pointed")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(bold ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.secondary))
+                RollingText(ambition.title, rising: rank(ambition) >= rank(previous ?? ambition),
+                            font: .system(size: 12, weight: .semibold))
+                MenuChevron(size: 8)
+            }
+        }
+        .motion(Motion.pop, value: ambition)
+        .onChange(of: ambition, initial: true) { _, now in previous = now }
+    }
+
+    private func rank(_ ambition: DesignAmbition) -> Int {
+        DesignAmbition.allCases.firstIndex(of: ambition) ?? 0
     }
 }
 

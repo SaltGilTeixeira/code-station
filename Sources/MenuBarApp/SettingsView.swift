@@ -147,6 +147,11 @@ final class AppSettings {
         }
     }
 
+    // The Design ambition a session follows until it picks its own.
+    var designAmbition: DesignAmbition {
+        didSet { Preferences.setDesignAmbition(designAmbition, in: preferences) }
+    }
+
     var sessionFinishedSound: SessionSound {
         didSet {
             Preferences.setSessionFinishedSound(sessionFinishedSound, in: preferences)
@@ -184,6 +189,7 @@ final class AppSettings {
         sessionTitlesEnabled = Preferences.sessionTitlesEnabled(in: preferences)
         promptSuggestionsEnabled = Preferences.promptSuggestionsEnabled(in: preferences)
         sessionFinishedSound = Preferences.sessionFinishedSound(in: preferences)
+        designAmbition = Preferences.designAmbition(in: preferences)
         hasCompletedOnboarding = Preferences.hasCompletedOnboarding(in: preferences)
         costShown = Dictionary(uniqueKeysWithValues: AgentKind.allCases.map {
             ($0, Preferences.showCost(for: $0, in: preferences))
@@ -525,6 +531,7 @@ struct SettingsView: View {
                 oldSessions.id(SettingsSearchTarget.generalOldSessions.id)
                 orphanedWorktrees.id(SettingsSearchTarget.generalOrphanedWorktrees.id)
                 sessionMemory.id(SettingsSearchTarget.generalSessionMemory.id)
+                design.id(SettingsSearchTarget.generalDesign.id)
                 skillRefresh.id(SettingsSearchTarget.generalSkills.id)
                 system.id(SettingsSearchTarget.generalSystem.id)
             }
@@ -756,6 +763,32 @@ struct SettingsView: View {
                     }
                     .fixedSize(horizontal: true, vertical: false)
                     .accessibilityLabel("Session memory limit: \(limit.title)")
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 13)
+            }
+        }
+    }
+
+    private var design: some View {
+        ChoiceBlock("DESIGN") {
+            SettingsCard {
+                HStack(alignment: .center, spacing: 20) {
+                    settingCopy(
+                        title: "Ambition",
+                        detail: "\(settings.designAmbition.detail) Each Design session can choose its own from the composer.")
+                    Spacer(minLength: 0)
+                    HStack(spacing: 4) {
+                        ForEach(DesignAmbition.allCases) { ambition in
+                            ChoicePill(title: ambition.title,
+                                       selected: settings.designAmbition == ambition) {
+                                settings.designAmbition = ambition
+                            }
+                            .accessibilityLabel("Design ambition: \(ambition.title)")
+                            .accessibilityValue(settings.designAmbition == ambition ? "Selected" : "Not selected")
+                        }
+                    }
+                    .fixedSize()
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 13)
@@ -1742,6 +1775,7 @@ enum SettingsSearchTarget: String, Hashable {
     case generalOldSessions
     case generalOrphanedWorktrees
     case generalSessionMemory
+    case generalDesign
     case generalSkills
     case generalSystem
     case appearanceTheme
@@ -1795,6 +1829,8 @@ enum SettingsSearchIndex {
                "git checkout prune automatically no session disk cleanup uncommitted branch"),
         result("Session memory", .general, .generalSessionMemory,
                "limit ram gigabytes gb stop turn protect mac build automatic out of memory"),
+        result("Design ambition", .general, .generalDesign,
+               "design restrained balanced all out showcase polish bold style canvas default"),
         result("Skills refresh", .general, .generalSkills,
                "skills marketplace refresh versions interval daily"),
         result("Terminal", .general, .generalSystem,
