@@ -1,3 +1,5 @@
+import AppKit
+import QuartzCore
 import SwiftUI
 
 // The prompt box under a transcript: what has been dropped or pasted onto it, the field
@@ -283,23 +285,85 @@ private struct TurnRing: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let lap = 1.4
-
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion)) { context in
-            let turn = context.date.timeIntervalSinceReferenceDate
-                .truncatingRemainder(dividingBy: Self.lap) / Self.lap
-            Circle()
-                .trim(from: 0, to: 0.3)
-                .stroke(AngularGradient(colors: [colour.opacity(0), colour.opacity(0.55)],
-                                        center: .center,
-                                        startAngle: .degrees(0), endAngle: .degrees(108)),
-                        lineWidth: 2)
-                .rotationEffect(.degrees(reduceMotion ? 0 : turn * 360))
+        TurnRingLayer(colour: colour, moving: !reduceMotion)
+            .padding(-4)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct TurnRingLayer: NSViewRepresentable {
+    let colour: Color
+    let moving: Bool
+
+    func makeNSView(context: Context) -> TurnRingView { TurnRingView() }
+
+    func updateNSView(_ view: TurnRingView, context: Context) {
+        view.update(colour: colour.resolve(in: context.environment).cgColor, moving: moving)
+    }
+}
+
+// The arc is a slice of a conic gradient seen through a ring-shaped mask. The gradient
+// fades in towards the arc's leading end, which is the end the turn moves towards.
+final class TurnRingView: LoopLayerView {
+    static let lap: CFTimeInterval = 1.4
+    static let arcLength: NSNumber = 0.3
+
+    private let turner = CALayer()
+    private let gradient = CAGradientLayer()
+    private let ring = CAShapeLayer()
+    private var colour: CGColor?
+    private(set) var moving = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        gradient.type = .conic
+        gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
+        gradient.endPoint = CGPoint(x: 1, y: 0.5)
+        gradient.locations = [0, Self.arcLength, Self.arcLength, 1]
+        ring.fillColor = nil
+        ring.strokeColor = .black
+        ring.lineWidth = 2
+        gradient.mask = ring
+        turner.addSublayer(gradient)
+        layer?.addSublayer(turner)
+    }
+
+    var loops: [String] { turner.animationKeys() ?? [] }
+
+    func update(colour: CGColor, moving: Bool) {
+        if colour != self.colour {
+            self.colour = colour
+            let clear = colour.copy(alpha: 0) ?? colour
+            let lit = colour.copy(alpha: colour.alpha * 0.55) ?? colour
+            LayerLoop.still { gradient.colors = [clear, lit, clear, clear] }
         }
-        .padding(-4)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+        guard moving != self.moving else { return }
+        self.moving = moving
+        restartLoops()
+    }
+
+    override func layoutLayers() {
+        turner.bounds = bounds
+        turner.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        // The line is centred on the circle, so half of it lies outside the view. The
+        // gradient reaches that far too, or the mask would cut the line in half.
+        let overhang = ring.lineWidth / 2
+        gradient.frame = bounds.insetBy(dx: -overhang, dy: -overhang)
+        ring.frame = gradient.bounds
+        ring.path = CGPath(ellipseIn: gradient.bounds.insetBy(dx: overhang, dy: overhang),
+                           transform: nil)
+    }
+
+    override func restartLoops() {
+        turner.removeAnimation(forKey: "turn")
+        guard moving else { return }
+        let turn = CABasicAnimation(keyPath: "transform.rotation.z")
+        turn.fromValue = 0
+        turn.toValue = CGFloat.pi * 2
+        turn.duration = Self.lap
+        turner.add(LayerLoop.repeating(turn, period: Self.lap), forKey: "turn")
     }
 }
 

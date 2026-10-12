@@ -505,17 +505,67 @@ private struct RunSpinner: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion)) { context in
-            let turn = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 0.8) / 0.8
-            ZStack {
-                Circle().stroke(Color.white.opacity(0.3), lineWidth: 1.8)
-                Circle()
-                    .trim(from: 0, to: 0.28)
-                    .stroke(Color.white, style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
-                    .rotationEffect(.degrees(reduceMotion ? 0 : turn * 360))
-            }
-        }
-        .frame(width: 11, height: 11)
+        RunSpinnerLayer(moving: !reduceMotion)
+            .frame(width: 11, height: 11)
+            .allowsHitTesting(false)
+    }
+}
+
+private struct RunSpinnerLayer: NSViewRepresentable {
+    let moving: Bool
+
+    func makeNSView(context: Context) -> RunSpinnerView { RunSpinnerView() }
+
+    func updateNSView(_ view: RunSpinnerView, context: Context) {
+        view.update(moving: moving)
+    }
+}
+
+final class RunSpinnerView: LoopLayerView {
+    static let lap: CFTimeInterval = 0.8
+
+    private let track = CAShapeLayer()
+    private let arc = CAShapeLayer()
+    private(set) var moving = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        track.fillColor = nil
+        track.strokeColor = CGColor(gray: 1, alpha: 0.3)
+        track.lineWidth = 1.8
+        arc.fillColor = nil
+        arc.strokeColor = .white
+        arc.lineWidth = 1.8
+        arc.lineCap = .round
+        arc.strokeEnd = 0.28
+        layer?.addSublayer(track)
+        layer?.addSublayer(arc)
+    }
+
+    var loops: [String] { arc.animationKeys() ?? [] }
+
+    func update(moving: Bool) {
+        guard moving != self.moving else { return }
+        self.moving = moving
+        restartLoops()
+    }
+
+    override func layoutLayers() {
+        let circle = CGPath(ellipseIn: bounds, transform: nil)
+        track.frame = bounds
+        track.path = circle
+        arc.frame = bounds
+        arc.path = circle
+    }
+
+    override func restartLoops() {
+        arc.removeAnimation(forKey: "turn")
+        guard moving else { return }
+        let turn = CABasicAnimation(keyPath: "transform.rotation.z")
+        turn.fromValue = 0
+        turn.toValue = CGFloat.pi * 2
+        turn.duration = Self.lap
+        arc.add(LayerLoop.repeating(turn, period: Self.lap), forKey: "turn")
     }
 }
 
@@ -524,29 +574,66 @@ private struct RunSpinner: View {
 private struct RunSweep: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let lap = 1.1
-
     var body: some View {
-        GeometryReader { geometry in
-            let width = geometry.size.width
+        Group {
             if reduceMotion {
                 Rectangle().fill(Theme.brand)
             } else {
-                TimelineView(.animation) { context in
-                    let progress = context.date.timeIntervalSinceReferenceDate
-                        .truncatingRemainder(dividingBy: Self.lap) / Self.lap
-                    // The draw curve: quick out of the gate, then a long gentle finish.
-                    let eased = 1 - pow(1 - progress, 3)
-                    let sweep = width * 0.35
-                    Rectangle()
-                        .fill(Theme.brand)
-                        .frame(width: sweep)
-                        .offset(x: -sweep + eased * (width + sweep))
-                }
+                RunSweepLayer()
             }
         }
         .frame(height: 2)
         .allowsHitTesting(false)
+    }
+}
+
+private struct RunSweepLayer: NSViewRepresentable {
+    func makeNSView(context: Context) -> RunSweepView { RunSweepView() }
+
+    func updateNSView(_ view: RunSweepView, context: Context) {
+        view.update(colour: Theme.brand.resolve(in: context.environment).cgColor)
+    }
+}
+
+final class RunSweepView: LoopLayerView {
+    static let lap: CFTimeInterval = 1.1
+    static let barShare: CGFloat = 0.35
+
+    private let bar = CALayer()
+    private var sweptWidth: CGFloat = 0
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        layer?.masksToBounds = true
+        layer?.addSublayer(bar)
+    }
+
+    var loops: [String] { bar.animationKeys() ?? [] }
+
+    func update(colour: CGColor) {
+        LayerLoop.still { bar.backgroundColor = colour }
+    }
+
+    // The bar starts just off the left edge and the sweep carries it just past the right,
+    // so how far it travels depends on the width, and a new width needs a new sweep.
+    override func layoutLayers() {
+        let width = bounds.width * Self.barShare
+        bar.frame = CGRect(x: -width, y: 0, width: width, height: bounds.height)
+        guard bounds.width != sweptWidth else { return }
+        sweptWidth = bounds.width
+        restartLoops()
+    }
+
+    override func restartLoops() {
+        bar.removeAnimation(forKey: "sweep")
+        guard sweptWidth > 0 else { return }
+        let sweep = CABasicAnimation(keyPath: "transform.translation.x")
+        sweep.fromValue = 0
+        sweep.toValue = sweptWidth * (1 + Self.barShare)
+        sweep.duration = Self.lap
+        // Quick out of the gate, then a long gentle finish.
+        sweep.timingFunction = CAMediaTimingFunction(controlPoints: 0.33, 1, 0.68, 1)
+        bar.add(LayerLoop.repeating(sweep, period: Self.lap), forKey: "sweep")
     }
 }
 
