@@ -122,7 +122,10 @@ struct Composer<Above: View, Accessory: View>: View {
             .animation(reduceMotion ? nil : Motion.control, value: state == .stopping)
         }
         .padding(.horizontal, inset)
-        .padding(.vertical, 14)
+        // The top matches the stack spacing, so a row above the field sits evenly
+        // between the edge of the bar and the field.
+        .padding(.top, 8)
+        .padding(.bottom, 14)
         .background(Theme.card)
         .overlay(RoundedRectangle(cornerRadius: 10)
             .stroke(Theme.accent, lineWidth: dropTargeted ? 2 : 0)
