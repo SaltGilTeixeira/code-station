@@ -97,4 +97,34 @@ struct WarningContrastTests {
             }
         }
     }
+
+    // Each Design ambition level has its own colour: the brush in the menu sits on the
+    // menu card, and the pill's words sit on the level's own tint.
+    @Test func everyDesignAmbitionIsReadableInBothAppearances() throws {
+        for appearance in try appearances() {
+            let card = try swatch(Theme.card, in: appearance)
+            for ambition in DesignAmbition.allCases {
+                let icon = try swatch(ambition.tint, in: appearance).over(card)
+                let fill = try swatch(ambition.pillFill, in: appearance).over(card)
+                let words = try swatch(ambition.pillInk, in: appearance).over(fill)
+
+                #expect(icon.contrast(against: card) >= 3,
+                        "\(ambition.title) icon on \(appearance.name.rawValue)")
+                #expect(words.contrast(against: fill) >= 4.5,
+                        "\(ambition.title) pill on \(appearance.name.rawValue)")
+            }
+        }
+    }
+
+    // All out has to stand apart from the house green, or the level that changes the
+    // most looks the same as the everyday one.
+    @Test func allOutDoesNotShareBalancedColour() throws {
+        for appearance in try appearances() {
+            let balanced = try swatch(DesignAmbition.balanced.tint, in: appearance)
+            let allOut = try swatch(DesignAmbition.allOut.tint, in: appearance)
+            #expect(balanced.red != allOut.red || balanced.green != allOut.green
+                        || balanced.blue != allOut.blue,
+                    "on \(appearance.name.rawValue)")
+        }
+    }
 }
