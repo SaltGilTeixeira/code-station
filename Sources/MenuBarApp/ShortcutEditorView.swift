@@ -110,20 +110,9 @@ struct ShortcutEditorForm<CommandContent: View>: View {
             }
             .disabled(locked)
             commandContent
-            Toggle(isOn: $draft.value.availableInAllProjects) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("Available in all projects").font(.system(size: 12, weight: .semibold))
-                    Text("Run it from any project folder or session worktree.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .toggleStyle(.appCheckbox)
-            .disabled(locked)
-            if let projectName = draft.projectName, !draft.value.availableInAllProjects {
-                Text("Saved for \(projectName).")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
+            ShortcutScopePicker(availableInAllProjects: $draft.value.availableInAllProjects,
+                                projectName: draft.projectName)
+                .disabled(locked)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -180,5 +169,60 @@ private struct ShortcutIconMenu: View {
         .accessibilityValue(symbol.flatMap { selected in
             ShortcutIcon.catalogue.first { $0.symbol == selected }?.label
         } ?? "No icon")
+    }
+}
+
+// Names both places a shortcut can show, so the narrower one is visible before anyone
+// picks it. A single on/off control only names one of them.
+struct ShortcutScopePicker: View {
+    @Binding var availableInAllProjects: Bool
+    // Set when the shortcut belongs to one project. Its narrow choice is that project,
+    // not the Shortcuts window, which never lists it.
+    let projectName: String?
+
+    @Namespace private var track
+
+    static func narrowTitle(projectName: String?) -> String {
+        projectName.map { "\($0) only" } ?? "Shortcuts window only"
+    }
+
+    static func help(availableInAllProjects: Bool, projectName: String?) -> String {
+        if availableInAllProjects {
+            return "Shows in every project and session. Runs in that project folder or session worktree."
+        }
+        if let projectName {
+            return "Only \(projectName) and its sessions show it. Other projects do not."
+        }
+        return "Only listed here. Projects and sessions do not show it."
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Show it in").font(.system(size: 12, weight: .semibold))
+                .accessibilityHidden(true)
+            HStack(spacing: 2) {
+                pill("All projects", selected: availableInAllProjects) { availableInAllProjects = true }
+                pill(Self.narrowTitle(projectName: projectName), selected: !availableInAllProjects) {
+                    availableInAllProjects = false
+                }
+            }
+            .padding(3)
+            .fieldSurface(cornerRadius: 10)
+            .fixedSize()
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Show it in")
+            Text(Self.help(availableInAllProjects: availableInAllProjects, projectName: projectName))
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func pill(_ title: String, selected: Bool, choose: @escaping () -> Void) -> some View {
+        ChoicePill(title: title, selected: selected, thumb: track) {
+            withAnimation(Motion.control) { choose() }
+        }
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
