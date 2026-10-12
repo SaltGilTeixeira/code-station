@@ -1679,6 +1679,8 @@ struct SessionView: View {
             }
             .task(id: agentFocus?.requestID) {
                 guard opened, let agentFocus else { return }
+                // A tool anchor does not exist until its lazy message row is on screen.
+                proxy.scrollTo(agentFocus.messageID, anchor: .top)
                 await Task.yield()
                 guard !Task.isCancelled else { return }
                 proxy.scrollTo(agentFocus.anchor, anchor: .top)
@@ -1969,7 +1971,7 @@ struct SessionView: View {
                     icon: "arrow.triangle.branch",
                     subtitle: "Starts a new session that carries the conversation up to this point.") {
                     guard let fork = store.forkSession(sessionID, before: message.id) else { return }
-                    runner.editDraft(fork.id) { draft in
+                    runner.composer.editDraft(fork.id) { draft in
                         draft.text = message.text
                         draft.attachments = (message.attachments ?? []).map {
                             Attachment(url: URL(fileURLWithPath: $0))
@@ -2269,7 +2271,7 @@ struct SessionView: View {
         if !busy, !blocked, let suggestion = runner.suggestion(sessionID) {
             PromptSuggestionStrip(
                 suggestion: suggestion,
-                hasDraft: !runner.draft(sessionID).text.isBlank,
+                hasDraft: !runner.composer.draft(sessionID).text.isBlank,
                 edit: editSuggestion,
                 send: sendSuggestion,
                 dismiss: { runner.dismissSuggestion(sessionID) })
@@ -2299,7 +2301,7 @@ struct SessionView: View {
         case .send:
             // With words already typed the pill reads Append, so the key that would have
             // sent has nothing to answer and falls through to its usual meaning.
-            guard runner.draft(sessionID).text.isBlank else { return false }
+            guard runner.composer.draft(sessionID).text.isBlank else { return false }
             sendSuggestion()
         case .cancel:
             runner.dismissSuggestion(sessionID)
@@ -2384,7 +2386,7 @@ struct SessionView: View {
                                      message: "The temporary text file could not be created."))
                 return
             }
-            runner.attach([attachment], to: sessionID)
+            runner.composer.attach([attachment], to: sessionID)
             composerFocused = true
         })
     }

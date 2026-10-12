@@ -125,9 +125,9 @@ struct TroubleshootTests {
     }
 
     @Test func claudeRunsWithOnlyAnEmptyMCPConfigurationWhenDisabled() {
-        let arguments = SessionRunner.arguments(
+        let arguments = AgentLaunchConfiguration(
             settings: SessionSettings(mcpServersEnabled: false),
-            defaults: SessionSettings(permissionMode: "acceptEdits"))
+            defaults: SessionSettings(permissionMode: "acceptEdits")).arguments
 
         #expect(pair(arguments, after: "--mcp-config") == #"{"mcpServers":{}}"#)
         #expect(arguments.contains("--strict-mcp-config"))
@@ -140,10 +140,10 @@ struct TroubleshootTests {
                 DisabledMCPServer(name: "grafana-platform-dev", transport: .stdio),
                 DisabledMCPServer(name: "remote", transport: .streamableHTTP),
             ])
-        let arguments = SessionRunner.arguments(
+        let arguments = AgentLaunchConfiguration(
             agent: .codex,
             settings: settings,
-            defaults: SessionSettings())
+            defaults: SessionSettings()).arguments
 
         #expect(arguments.contains(
             #"mcp_servers={"grafana-platform-dev"={enabled=false,command="/usr/bin/false"},"remote"={enabled=false,url="https://disabled.invalid"}}"#))
@@ -153,10 +153,10 @@ struct TroubleshootTests {
         let settings = SessionSettings(
             mcpServersEnabled: false,
             disabledMCPServerNames: ["cua_repl"])
-        let arguments = SessionRunner.arguments(
+        let arguments = AgentLaunchConfiguration(
             agent: .codex,
             settings: settings,
-            defaults: SessionSettings())
+            defaults: SessionSettings()).arguments
 
         #expect(!arguments.contains { $0.contains("mcp_servers") })
     }
@@ -211,12 +211,12 @@ struct TroubleshootTests {
     }
 
     @Test func claudeUsesTheFilteredMCPConfiguration() {
-        let arguments = SessionRunner.arguments(
+        let arguments = AgentLaunchConfiguration(
             settings: SessionSettings(
                 mcpServersEnabled: true,
                 allowedMCPServerNames: ["grafana-platform-dev", "grafana-shared-shared"]),
             defaults: SessionSettings(permissionMode: "acceptEdits"),
-            mcpConfigPath: "/tmp/filtered-mcp.json")
+            mcpConfigPath: "/tmp/filtered-mcp.json").arguments
 
         #expect(pair(arguments, after: "--mcp-config") == "/tmp/filtered-mcp.json")
         #expect(arguments.contains("--strict-mcp-config"))
@@ -239,7 +239,7 @@ struct TroubleshootTests {
     }
 
     @Test func codexDisablesServersOutsideTheSelectedEnvironment() {
-        let arguments = SessionRunner.arguments(
+        let arguments = AgentLaunchConfiguration(
             agent: .codex,
             settings: SessionSettings(
                 mcpServersEnabled: true,
@@ -247,7 +247,7 @@ struct TroubleshootTests {
                 disabledMCPServers: [
                     DisabledMCPServer(name: "grafana-platform-prd", transport: .stdio),
                 ]),
-            defaults: SessionSettings())
+            defaults: SessionSettings()).arguments
 
         let override = #"mcp_servers={"grafana-platform-prd"={enabled=false,command="/usr/bin/false"}}"#
         #expect(arguments.contains(override))
@@ -446,17 +446,17 @@ struct TroubleshootBriefTests {
         let sessionID = UUID()
         let evidence = Attachment(url: URL(fileURLWithPath: "/tmp/payments.log"))
 
-        runner.editBrief(sessionID) {
+        runner.composer.editBrief(sessionID) {
             $0.problem = "Payments return 503 after deployment"
             $0.incidentTime = "14:00 UTC"
             $0.attachments = [evidence]
             $0.mcpServersEnabled = false
         }
 
-        #expect(runner.brief(sessionID).problem == "Payments return 503 after deployment")
-        #expect(runner.brief(sessionID).incidentTime == "14:00 UTC")
-        #expect(runner.brief(sessionID).attachments == [evidence])
-        #expect(runner.brief(sessionID).mcpServersEnabled == false)
+        #expect(runner.composer.brief(sessionID).problem == "Payments return 503 after deployment")
+        #expect(runner.composer.brief(sessionID).incidentTime == "14:00 UTC")
+        #expect(runner.composer.brief(sessionID).attachments == [evidence])
+        #expect(runner.composer.brief(sessionID).mcpServersEnabled == false)
     }
 
     @Test func eachSessionKeepsItsOwnBrief() {
@@ -464,17 +464,17 @@ struct TroubleshootBriefTests {
         let first = UUID()
         let second = UUID()
 
-        runner.editBrief(first) { $0.problem = "checkout times out" }
-        runner.editBrief(second) { $0.problem = "webhooks arrive twice" }
+        runner.composer.editBrief(first) { $0.problem = "checkout times out" }
+        runner.composer.editBrief(second) { $0.problem = "webhooks arrive twice" }
 
-        #expect(runner.brief(first).problem == "checkout times out")
-        #expect(runner.brief(second).problem == "webhooks arrive twice")
+        #expect(runner.composer.brief(first).problem == "checkout times out")
+        #expect(runner.composer.brief(second).problem == "webhooks arrive twice")
     }
 
     @Test func aSessionWithoutABriefStartsOnTheDefaults() {
         let runner = SessionRunner()
 
-        let brief = runner.brief(UUID())
+        let brief = runner.composer.brief(UUID())
 
         #expect(brief.problem.isEmpty)
         #expect(brief.incidentTime.isEmpty)
@@ -487,13 +487,13 @@ struct TroubleshootBriefTests {
         let runner = SessionRunner()
         let sessionID = UUID()
 
-        runner.editBrief(sessionID) {
+        runner.composer.editBrief(sessionID) {
             $0.problem = "queue is stuck"
             $0.incidentTime = "last hour"
         }
-        runner.clearBrief(sessionID)
+        runner.composer.clearBrief(sessionID)
 
-        #expect(runner.brief(sessionID).problem.isEmpty)
-        #expect(runner.brief(sessionID).incidentTime.isEmpty)
+        #expect(runner.composer.brief(sessionID).problem.isEmpty)
+        #expect(runner.composer.brief(sessionID).incidentTime.isEmpty)
     }
 }

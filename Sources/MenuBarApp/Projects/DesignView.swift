@@ -423,7 +423,7 @@ struct DesignView: View {
                                                  size: 22)
                                 Button {
                                     let urls = FilePicker.chooseFiles(prompt: "Attach", message: "Choose references for this design.")
-                                    runner.attach(Attachments.fromDrop(urls), to: sessionID)
+                                    runner.composer.attach(Attachments.fromDrop(urls), to: sessionID)
                                     composerFocused = true
                                 } label: {
                                     Image(systemName: "paperclip")
@@ -455,7 +455,7 @@ struct DesignView: View {
 
     private func attachPastedText(_ text: String) {
         guard let attachment = Attachments.fromPastedText(text) else { return }
-        runner.attach([attachment], to: sessionID)
+        runner.composer.attach([attachment], to: sessionID)
         composerFocused = true
     }
 
@@ -636,7 +636,7 @@ struct DesignView: View {
 
     private func selectElement(_ selection: DesignElementSelection) {
         let label = selection.text.isEmpty ? selection.tag.uppercased() : "\"\(selection.text)\""
-        runner.editDraft(sessionID) { draft in
+        runner.composer.editDraft(sessionID) { draft in
             let reference = "Refine \(label) at `\(selection.selector)`. "
             if draft.text.isEmpty { draft.text = reference }
             else if !draft.text.contains(selection.selector) { draft.text += "\n\n" + reference }
@@ -654,7 +654,7 @@ struct DesignView: View {
         case .selection:
             guard let image, let attachment = Attachments.fromImage(image, prefix: "selection")
             else { return }
-            runner.attach([attachment], to: sessionID)
+            runner.composer.attach([attachment], to: sessionID)
             composerFocused = true
         case .handoff:
             Task {

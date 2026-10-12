@@ -30,13 +30,13 @@ struct TroubleshootTabView: View {
 
     // The half-written brief is the runner's, not this view's: the pane keeps only the
     // tab that is open, so anything held here would go the moment Chat is looked at.
-    private var brief: SessionRunner.TroubleshootBrief { runner.brief(sessionID) }
+    private var brief: SessionComposerStore.TroubleshootBrief { runner.composer.brief(sessionID) }
 
     private func entry<Value>(
-        _ field: WritableKeyPath<SessionRunner.TroubleshootBrief, Value>
+        _ field: WritableKeyPath<SessionComposerStore.TroubleshootBrief, Value>
     ) -> Binding<Value> {
-        Binding(get: { runner.brief(sessionID)[keyPath: field] },
-                set: { value in runner.editBrief(sessionID) { $0[keyPath: field] = value } })
+        Binding(get: { runner.composer.brief(sessionID)[keyPath: field] },
+                set: { value in runner.composer.editBrief(sessionID) { $0[keyPath: field] = value } })
     }
 
     var body: some View {
@@ -382,7 +382,7 @@ struct TroubleshootTabView: View {
                         sessionID: sessionID, store: store)
             // The form is left behind rather than kept: what it said is now in the
             // transcript, and a second brief is a new question about the same session.
-            runner.clearBrief(sessionID)
+            runner.composer.clearBrief(sessionID)
             openConversation()
         }
     }

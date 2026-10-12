@@ -226,3 +226,34 @@ enum PKCE {
         Data(SHA256.hash(data: Data(verifier.utf8))).base64URLEncoded
     }
 }
+
+extension OAuthConfig {
+    func tokenRequest(fields: [String: String]) throws -> URLRequest {
+        guard let url = URL(string: tokenURL) else {
+            throw OAuthError("The access token URL is not valid.")
+        }
+
+        var fields = fields
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        switch clientAuth {
+        case .body:
+            fields["client_id"] = clientID
+            if !clientSecret.isEmpty { fields["client_secret"] = clientSecret }
+        case .basicHeader:
+            let pair = "\(FormURLEncoding.component(clientID)):\(FormURLEncoding.component(clientSecret))"
+            request.setValue("Basic \(Data(pair.utf8).base64EncodedString())",
+                             forHTTPHeaderField: "Authorization")
+            // Providers that read the header still expect the id in the body for PKCE.
+            if fields["grant_type"] == "authorization_code" { fields["client_id"] = clientID }
+        }
+
+        request.httpBody = Data(fields.sorted { $0.key < $1.key }.map {
+            "\(FormURLEncoding.component($0.key))=\(FormURLEncoding.component($0.value))"
+        }.joined(separator: "&").utf8)
+        return request
+    }
+}

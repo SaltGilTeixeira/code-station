@@ -105,13 +105,13 @@ struct SessionScrollTests {
             await pane.settle()
             #expect(pane.distanceFromBottom(scroll) > 100)
 
-            pane.harness.runner.editDraft(pane.harness.session.id) { $0.text = prompt }
+            pane.harness.runner.composer.editDraft(pane.harness.session.id) { $0.text = prompt }
             await pane.settle()
             #expect(editor.delegate?.textView?(
                 editor, doCommandBy: #selector(NSResponder.insertNewline(_:))) == true)
             await pane.settle()
 
-            #expect(pane.harness.runner.draft(pane.harness.session.id).isEmpty)
+            #expect(pane.harness.runner.composer.draft(pane.harness.session.id).isEmpty)
             #expect(abs(pane.distanceFromBottom(scroll)) < 2)
         }
 

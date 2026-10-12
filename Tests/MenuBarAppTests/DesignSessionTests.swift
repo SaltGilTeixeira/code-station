@@ -631,7 +631,7 @@ struct DesignSessionTests {
 
     @Test func bothAgentsReceiveDesignAsAPrivilegedInstruction() throws {
         let artifact = URL(fileURLWithPath: "/tmp/code-station design/index.html")
-        let prompt = SessionRunner.designSystemPrompt(artifactURL: artifact)
+        let prompt = AgentInstructions.designSystemPrompt(artifactURL: artifact)
 
         #expect(prompt.contains("scoped change from the existing product"))
         // Nothing else steers the look, so the aesthetic guidance travels with every
@@ -639,20 +639,20 @@ struct DesignSessionTests {
         #expect(prompt.contains("Generated design clusters around a few looks"))
         #expect(prompt.contains("image generation tool"))
 
-        let claude = SessionRunner.arguments(
+        let claude = AgentLaunchConfiguration(
             agent: .claudeCode,
             settings: SessionSettings(),
             defaults: SessionSettings(),
-            additionalSystemPrompt: prompt)
+            additionalSystemPrompt: prompt).arguments
         let claudePrompt = try #require(value(after: "--append-system-prompt", in: claude))
         #expect(claudePrompt.contains("You are working in Design mode"))
         #expect(claudePrompt.contains(artifact.path))
 
-        let codex = SessionRunner.arguments(
+        let codex = AgentLaunchConfiguration(
             agent: .codex,
             settings: SessionSettings(),
             defaults: SessionSettings(),
-            additionalSystemPrompt: prompt)
+            additionalSystemPrompt: prompt).arguments
         let instruction = try #require(codex.first {
             $0.hasPrefix("developer_instructions=")
         })
@@ -664,14 +664,14 @@ struct DesignSessionTests {
     @Test func theCanvasWidthReachesTheAgentWhenItIsKnown() {
         let artifact = URL(fileURLWithPath: "/tmp/code-station design/index.html")
 
-        let measured = SessionRunner.designSystemPrompt(artifactURL: artifact,
+        let measured = AgentInstructions.designSystemPrompt(artifactURL: artifact,
                                                         canvasWidth: 1067.4)
         #expect(measured.contains("1067px wide"))
         #expect(measured.contains("min-width"))
 
         // A guessed width would send the design off to the wrong layout just as surely as
         // no width at all, so an unmeasured canvas says nothing rather than picking a number.
-        let unmeasured = SessionRunner.designSystemPrompt(artifactURL: artifact)
+        let unmeasured = AgentInstructions.designSystemPrompt(artifactURL: artifact)
         #expect(!unmeasured.contains("viewport"))
         #expect(unmeasured.contains("You are working in Design mode"))
         #expect(unmeasured.contains(artifact.path))
@@ -680,7 +680,7 @@ struct DesignSessionTests {
     @Test func eachAmbitionChangesOnlyTheTasteTheAgentIsAskedFor() {
         let artifact = URL(fileURLWithPath: "/tmp/code-station design/index.html")
         let prompts = Dictionary(uniqueKeysWithValues: DesignAmbition.allCases.map {
-            ($0, SessionRunner.designSystemPrompt(artifactURL: artifact, ambition: $0))
+            ($0, AgentInstructions.designSystemPrompt(artifactURL: artifact, ambition: $0))
         })
 
         // The canvas, files and stock looks are the same deal at every level.
@@ -700,7 +700,7 @@ struct DesignSessionTests {
         #expect(balanced.contains("standard of finished product work"))
         #expect(balanced.contains("at most one deliberate reveal"))
         #expect(!balanced.contains("Go all out"))
-        #expect(SessionRunner.designSystemPrompt(artifactURL: artifact) == balanced)
+        #expect(AgentInstructions.designSystemPrompt(artifactURL: artifact) == balanced)
 
         let allOut = prompts[.allOut] ?? ""
         #expect(allOut.contains("showcase piece"))
@@ -724,7 +724,7 @@ struct DesignSessionTests {
 
     @Test func implementationReceivesItsReferenceAsAPrivilegedInstruction() throws {
         let reference = URL(fileURLWithPath: "/tmp/approved design")
-        let prompt = SessionRunner.implementationSystemPrompt(referenceURL: reference)
+        let prompt = AgentInstructions.implementationSystemPrompt(referenceURL: reference)
 
         #expect(prompt.contains("implementing an approved Design"))
         #expect(prompt.contains(reference.path))

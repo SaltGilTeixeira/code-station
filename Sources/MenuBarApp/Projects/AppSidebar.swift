@@ -35,6 +35,8 @@ struct AppSidebar: View {
     @State private var askingTask: Project?
     @State private var sessionVisibility = SidebarSessionVisibility()
     @State private var renderedSessionIDs: Set<UUID> = []
+    @State private var scrollPosition = ScrollPosition(edge: .top)
+    @State private var scrollOffset: CGFloat = 0
     @State private var filterBox = SidebarFilterBox()
     @State private var oldSessions = OldSessionsWatch()
     @State private var dropSlot: SidebarDropSlot?
@@ -46,8 +48,8 @@ struct AppSidebar: View {
     }
 
     private var sessionRevealTarget: SessionRevealTarget {
-        SessionRevealTarget(id: store.sessionToReveal,
-                            isRendered: store.sessionToReveal.map(renderedSessionIDs.contains) ?? false)
+        SessionRevealTarget(id: store.navigation.sessionToReveal,
+                            isRendered: store.navigation.sessionToReveal.map(renderedSessionIDs.contains) ?? false)
     }
 
     var body: some View {
@@ -63,12 +65,17 @@ struct AppSidebar: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Projects and sessions")
         .onChange(of: store.sidebarDestination, initial: true) { old, destination in
-            if destination?.sessionID == nil { store.sessionToReveal = nil }
+            if destination?.sessionID == nil { store.navigation.sessionToReveal = nil }
             guard let destination else { return }
             setExpanded(true, for: destination.containerID)
             if let sessionID = destination.sessionID {
                 filterBox.clear()
-                store.sessionToReveal = sessionID
+                if old?.containerID != destination.containerID {
+                    store.navigation.sessionToReveal = sessionID
+                } else if store.navigation.sessionToReveal == nil {
+                    // Inserting a card can shift the lazy stack's estimated positions.
+                    scrollPosition.scrollTo(y: scrollOffset)
+                }
             }
             if old != destination { announceSelection() }
         }
@@ -77,18 +84,18 @@ struct AppSidebar: View {
                 revealCurrentContainer()
             }
         }
-        .onChange(of: store.sessionToReveal) { _, id in
+        .onChange(of: store.navigation.sessionToReveal) { _, id in
             guard let id, let session = store.sidebarSession(id) else { return }
             filterBox.clear()
             setExpanded(true, for: containerID(of: session))
         }
-        .onChange(of: store.projectToReveal) { _, id in
+        .onChange(of: store.navigation.projectToReveal) { _, id in
             guard let id else { return }
             if !orderedItems.contains(where: { $0.id == id }) { filterBox.clear() }
             setExpanded(true, for: id)
         }
         .task { await watchWorkingTrees() }
-        .task(id: store.sidebarHighlight) { await endHighlight() }
+        .task(id: store.navigation.sidebarHighlight) { await endHighlight() }
         .task(id: oldSessions.rule(store: store, runner: runner, days: appSettings.oldSessionDays)) {
             await oldSessions.watch(store: store, runner: runner, days: appSettings.oldSessionDays)
         }
@@ -197,7 +204,7 @@ struct AppSidebar: View {
         setExpanded(true, for: containerID)
         sessionVisibility.pin(session.id, in: containerID)
         store.selectSession(session.id, destination: destination(for: session))
-        store.sessionToReveal = session.id
+        store.navigation.sessionToReveal = session.id
     }
 
     // Where opening a card lands: the tab the session was left on. The Design
@@ -307,10 +314,14 @@ struct AppSidebar: View {
                         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: collapsedGroups)
                         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: filterBox.text)
                     }
+                    .scrollPosition($scrollPosition)
+                    .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.y } action: { _, offset in
+                        scrollOffset = offset
+                    }
                     .onPreferenceChange(SidebarRenderedSessionsKey.self) { renderedSessionIDs = $0 }
                     .onDisappear { renderedSessionIDs = [] }
                     .task(id: sessionRevealTarget) { await reveal(with: scroller) }
-                    .task(id: store.projectToReveal) { await revealProject(with: scroller) }
+                    .task(id: store.navigation.projectToReveal) { await revealProject(with: scroller) }
                 }
             }
         }
@@ -407,7 +418,7 @@ struct AppSidebar: View {
 
     private func toggleExpanded(_ id: UUID, expanded: Bool) {
         if isFiltering { filterBox.clearForDisclosure() }
-        store.sessionToReveal = nil
+        store.navigation.sessionToReveal = nil
         setExpanded(!expanded, for: id)
         if expanded { sessionVisibility.reset(id) }
     }
@@ -416,13 +427,13 @@ struct AppSidebar: View {
         guard let destination = store.sidebarDestination else { return }
         setExpanded(true, for: destination.containerID)
         if let sessionID = destination.sessionID {
-            store.sessionToReveal = sessionID
+            store.navigation.sessionToReveal = sessionID
         } else {
-            store.projectToReveal = destination.containerID
+            store.navigation.projectToReveal = destination.containerID
         }
         // Dropping the filter puts the whole rail back, which moves the current row from
         // wherever the matches had left it.
-        store.sidebarHighlight = destination.sessionID ?? destination.containerID
+        store.navigation.sidebarHighlight = destination.sessionID ?? destination.containerID
     }
 
     private func announceSelection() {
@@ -512,7 +523,7 @@ struct AppSidebar: View {
                  confirmRemoveWorkspace(workspace)
              }]
         }
-        .sidebarRevealGlow(store.sidebarHighlight == workspace.id)
+        .sidebarRevealGlow(store.navigation.sidebarHighlight == workspace.id)
         .sidebarReorder(workspace.id, enabled: canReorder, slot: $dropSlot) {
             dropItem($0, beside: workspace.id, after: $1)
         }
@@ -579,7 +590,7 @@ struct AppSidebar: View {
             onCancelRename: { renamingID = nil }
         )
         .appContextMenu { headerMenu(project) }
-        .sidebarRevealGlow(store.sidebarHighlight == project.id)
+        .sidebarRevealGlow(store.navigation.sidebarHighlight == project.id)
         .sidebarReorder(project.id, enabled: canReorder, slot: $dropSlot) {
             dropItem($0, beside: project.id, after: $1)
         }
@@ -649,7 +660,7 @@ struct AppSidebar: View {
                                 renamingID = nil
                             },
                             onCancelRename: { renamingID = nil })
-                    .sidebarRevealGlow(store.sidebarHighlight == session.id)
+                    .sidebarRevealGlow(store.navigation.sidebarHighlight == session.id)
             }
             .sidebarReorder(session.id, enabled: canReorder, slot: $dropSlot) {
                 dropSession($0, beside: session.id, after: $1, in: sessions)
@@ -848,7 +859,7 @@ struct AppSidebar: View {
     // in view leaves the rail where the user put it. Starting a session is the common
     // case, and its card is drawn next to the row that was just clicked.
     private func reveal(with scroller: ScrollViewProxy) async {
-        guard let id = store.sessionToReveal, store.sidebarDestination?.sessionID == id,
+        guard let id = store.navigation.sessionToReveal, store.sidebarDestination?.sessionID == id,
               let session = store.sidebarSession(id) else { return }
         let containerID = containerID(of: session)
         // The card is created by the same change that asked for this, so the list has to be
@@ -865,23 +876,23 @@ struct AppSidebar: View {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.26)) {
             scroller.scrollTo(id)
         }
-        store.sessionToReveal = nil
+        store.navigation.sessionToReveal = nil
     }
 
     // A blink says where the rail landed once; holding the request would keep the row
     // marked long after the eye has found it.
     private func endHighlight() async {
-        guard store.sidebarHighlight != nil else { return }
+        guard store.navigation.sidebarHighlight != nil else { return }
         try? await Task.sleep(for: .milliseconds(1_000))
         guard !Task.isCancelled else { return }
-        store.sidebarHighlight = nil
+        store.navigation.sidebarHighlight = nil
     }
 
     // Brings a project opened away from the rail into view. The row has to be drawn
     // before it can be scrolled to, so a filter narrow enough to hide it is dropped and
     // a folded section is unfolded first.
     private func revealProject(with scroller: ScrollViewProxy) async {
-        guard let id = store.projectToReveal,
+        guard let id = store.navigation.projectToReveal,
               store.project(id) != nil || store.workspace(id) != nil else { return }
         if !orderedItems.contains(where: { $0.id == id }) { filterBox.clear() }
         showGroup(containing: id)
@@ -890,7 +901,7 @@ struct AppSidebar: View {
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.26)) {
             scroller.scrollTo(id, anchor: .top)
         }
-        store.projectToReveal = nil
+        store.navigation.projectToReveal = nil
     }
 
     // MARK: - Creating and removing sessions
@@ -916,7 +927,7 @@ struct AppSidebar: View {
                 seed: .init(id: sessionID, agent: agent, model: model,
                             agentAvatarName: agentAvatarName, mode: mode)) {
             case .success(let session):
-                store.sessionToReveal = session.id
+                store.navigation.sessionToReveal = session.id
             case .failure(let failure):
                 dialogs.show(.notice("Could not create the session", message: failure.message))
             }
@@ -932,7 +943,7 @@ struct AppSidebar: View {
             switch await SessionLifecycle.createWorkspaceSession(
                 choice, in: workspace, store: store) {
             case .success:
-                store.sessionToReveal = choice.sessionID
+                store.navigation.sessionToReveal = choice.sessionID
             case .failure(let failure):
                 dialogs.show(.notice(failure.title, message: failure.message))
             }
@@ -1015,7 +1026,7 @@ struct AppSidebar: View {
                 agent: agent, model: model,
                 agentAvatarName: agentAvatarName, mode: mode, store: store) {
             case .success:
-                store.sessionToReveal = sessionID
+                store.navigation.sessionToReveal = sessionID
             case .failure(let failure):
                 dialogs.show(.notice(failure.title, message: failure.message))
             }
@@ -1262,7 +1273,7 @@ struct AppSidebar: View {
         switch TaskRun.run(project, values: values, note: note, store: store, runner: runner,
                            agentAvatarName: appSettings.defaultAgentAvatarName) {
         case .success(let session):
-            store.sessionToReveal = session.id
+            store.navigation.sessionToReveal = session.id
         case .failure(let failure):
             dialogs.show(.notice("Could not run the task", message: failure.message))
         }

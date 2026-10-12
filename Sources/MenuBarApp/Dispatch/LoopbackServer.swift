@@ -117,26 +117,38 @@ final class LoopbackServer: @unchecked Sendable {
     private func accept(_ connection: NWConnection) {
         connections.append(connection)
         connection.start(queue: queue)
-        // One read is enough: the redirect is a bare GET, so the request line carrying the
-        // query is in the first packet.
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { [weak self] data, _, _, _ in
-            guard let self else { return }
-            self.queue.async {
-                guard let data, let request = String(data: data, encoding: .utf8),
-                      let query = Self.query(from: request) else {
-                    self.reply(on: connection, body: Self.page(title: "Nothing to do here",
-                                                               detail: "This window can be closed."))
-                    return
+        receive(on: connection, buffered: Data())
+    }
+
+    private func receive(on connection: NWConnection, buffered: Data) {
+        let headerLimit = 16 * 1024
+        connection.receive(minimumIncompleteLength: 1, maximumLength: headerLimit - buffered.count) {
+            [weak self] data, _, complete, error in
+            guard let self, !self.stopped else { return }
+            var buffered = buffered
+            if let data { buffered.append(data) }
+            guard buffered.range(of: Data("\r\n\r\n".utf8)) != nil else {
+                if error != nil || complete || buffered.count >= headerLimit {
+                    connection.cancel()
+                    self.connections.removeAll { $0 === connection }
+                } else {
+                    self.receive(on: connection, buffered: buffered)
                 }
-                let landed = query["error"] == nil
-                // Finishing tears the listener down, and that has to wait until the page
-                // is on its way out, or the browser shows a connection error instead of it.
-                self.reply(on: connection,
-                           body: Self.page(title: landed ? "Signed in" : "Sign-in failed",
-                                           detail: landed ? "You can close this window and go back to Code Station."
-                                                          : query["error_description"] ?? query["error"] ?? "")) {
-                    self.finish(.success(query))
-                }
+                return
+            }
+            guard let request = String(data: buffered, encoding: .utf8),
+                  let query = Self.query(from: request) else {
+                self.reply(on: connection, body: Self.page(title: "Nothing to do here",
+                                                           detail: "This window can be closed."))
+                return
+            }
+            let landed = query["error"] == nil
+            // Send the page before closing the listener so the browser sees a response.
+            self.reply(on: connection,
+                       body: Self.page(title: landed ? "Signed in" : "Sign-in failed",
+                                       detail: landed ? "You can close this window and go back to Code Station."
+                                                      : query["error_description"] ?? query["error"] ?? "")) {
+                self.finish(.success(query))
             }
         }
     }
@@ -152,8 +164,9 @@ final class LoopbackServer: @unchecked Sendable {
         """
         connection.send(content: Data(response.utf8), completion: .contentProcessed { [weak self] _ in
             connection.cancel()
-            guard let self, let done else { return }
-            self.queue.async { done() }
+            guard let self else { return }
+            self.connections.removeAll { $0 === connection }
+            done?()
         })
     }
 
@@ -188,7 +201,8 @@ final class LoopbackServer: @unchecked Sendable {
     // MARK: - Parsing
 
     static func query(from request: String) -> [String: String]? {
-        guard let line = request.split(separator: "\r\n", maxSplits: 1).first,
+        guard request.contains("\r\n\r\n"),
+              let line = request.split(separator: "\r\n", maxSplits: 1).first,
               let target = HTTPRequestLine.target(of: line) else { return nil }
         return HTTPRequestLine.query(in: target)
     }

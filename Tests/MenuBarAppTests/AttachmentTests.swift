@@ -7,7 +7,7 @@ import Testing
 // Reports what a view asks for when it is offered a width, which is how a picture that
 // cannot be made narrower gives itself away.
 private struct WidthProbe: Layout {
-    let report: (CGFloat) -> Void
+    let report: @Sendable (CGFloat) -> Void
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let size = subviews[0].sizeThatFits(proposal)
@@ -240,7 +240,7 @@ struct AttachmentTests {
         try widePNG().write(to: file)
 
         let measured = MeasuredWidth()
-        let host = NSHostingView(rootView: WidthProbe(report: { measured.value = $0 }) {
+        let host = NSHostingView(rootView: WidthProbe(report: { width in MainActor.assumeIsolated { measured.value = width } }) {
             InlineImageView(url: file, maximumWidth: 543)
                 .environment(DialogPresenter())
                 .environment(TooltipPresenter())

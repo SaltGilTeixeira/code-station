@@ -20,7 +20,7 @@ struct SessionResizeTests {
         store.append(ChatMessage(role: .assistant, text: String(repeating:
             "The conversation should wrap to the space left beside the sidebar. ", count: 8)),
                      to: session.id)
-        runner.editDraft(session.id) {
+        runner.composer.editDraft(session.id) {
             $0.text = "Check the window layout while narrowing and widening the app."
         }
         let sidebar = FrameAnchor()

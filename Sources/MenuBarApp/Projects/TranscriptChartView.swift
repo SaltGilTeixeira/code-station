@@ -449,12 +449,12 @@ struct TranscriptChartReadout: View {
 
     // Room between the pointer and the card, so the card never sits under the cursor and
     // hides the very reading it is naming.
-    private static let gap: CGFloat = 16
+    private nonisolated static let gap: CGFloat = 16
 
     // The card follows the pointer, but it is the plot that decides where it can go: it
     // swaps to the other side of the pointer rather than run off the right edge, and it
     // is held inside the plot on both axes so no part of it is ever clipped away.
-    static func placement(pointer: CGPoint, card: CGSize, within plot: CGSize) -> CGSize {
+    nonisolated static func placement(pointer: CGPoint, card: CGSize, within plot: CGSize) -> CGSize {
         let right = pointer.x + gap
         let left = pointer.x - gap - card.width
         let x = right + card.width <= plot.width || left < 0 ? right : left

@@ -332,3 +332,11 @@ struct HTTPResult: Equatable {
         }
     }
 }
+
+// Raw values must escape literal percent signs as well as form separators.
+enum FormURLEncoding {
+    static func component(_ value: String) -> String {
+        let allowed = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? ""
+    }
+}

@@ -133,7 +133,7 @@ struct TranscriptChartTests {
     // character that has no glyph: it would read as though it were not there and be copied
     // back the same way.
     @Test func everyClaudeSessionIsToldHowToDrawOne() {
-        #expect(SessionRunner.appendedSystemPrompt.contains(TranscriptChartSpec.agentInstructions))
+        #expect(AgentInstructions.appendedSystemPrompt.contains(TranscriptChartSpec.agentInstructions))
         #expect(TranscriptChartSpec.agentInstructions.contains("```chart"))
         #expect(!TranscriptChartSpec.agentInstructions.contains(TranscriptMarker.open))
     }

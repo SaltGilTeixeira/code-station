@@ -115,6 +115,7 @@ enum FileTextSearch {
         var lines: [FileTextLine] = []
         var location = start
         while location < document.length {
+            if Task.isCancelled { return (lines, nil) }
             let hit = document.range(of: query, options: .caseInsensitive,
                                      range: NSRange(location: location, length: document.length - location))
             guard hit.location != NSNotFound, hit.length > 0 else { break }
@@ -157,19 +158,36 @@ enum FileTextSearch {
 
     // Images, binaries, empty files and anything past the size the editor opens are left
     // out: a match there could not be shown.
-    static func documents(for files: [FileNode]) async -> [FileTextDocument] {
-        await Task.detached(priority: .userInitiated) {
-            var documents: [FileTextDocument] = []
+    struct LoadedDocuments: Sendable {
+        var documents: [FileTextDocument] = []
+        var limited = false
+    }
+
+    static let byteLimit = 32 * 1024 * 1024
+
+    static func documents(for files: [FileNode], byteLimit: Int = byteLimit) async -> LoadedDocuments {
+        guard !Task.isCancelled else { return LoadedDocuments() }
+        let task = Task.detached(priority: .userInitiated) {
+            var loaded = LoadedDocuments()
+            var remaining = byteLimit
             for file in files {
-                if Task.isCancelled { return documents }
+                if Task.isCancelled { break }
                 guard !FileTree.imageKinds.contains(file.kind),
-                      file.size > 0, file.size <= FileTree.byteLimit,
-                      let data = try? Data(contentsOf: file.url.resolvingSymlinksInPath()),
-                      !data.isEmpty, !data.looksBinary else { continue }
-                documents.append(FileTextDocument(file: file, text: String(decoding: data, as: UTF8.self)))
+                      file.size > 0, file.size <= FileTree.byteLimit else { continue }
+                guard file.size <= remaining else { loaded.limited = true; continue }
+                guard let handle = try? FileHandle(forReadingFrom: file.url.resolvingSymlinksInPath()) else { continue }
+                // Metadata can be stale if a file grows while the search is opening.
+                let data = try? handle.read(upToCount: min(remaining, Int(FileTree.byteLimit)) + 1)
+                try? handle.close()
+                guard let data, !data.isEmpty, !data.looksBinary else { continue }
+                guard data.count <= remaining else { loaded.limited = true; continue }
+                guard data.count <= FileTree.byteLimit else { continue }
+                remaining -= data.count
+                loaded.documents.append(FileTextDocument(file: file, text: String(decoding: data, as: UTF8.self)))
             }
-            return documents
-        }.value
+            return loaded
+        }
+        return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
     private static func excerpt(of line: Int, hits: [NSRange], index: LineIndex,
@@ -227,6 +245,7 @@ final class FindInFilesModel {
     private(set) var result = FileTextSearchResult()
     private(set) var matches: [FindInFilesMatch] = []
     private(set) var selectedIndex: Int?
+    private(set) var limited = false
     private(set) var loading = true
     private(set) var loadingMore = false
     // The query the result belongs to. Typing runs ahead of the search for a moment, and
@@ -251,9 +270,11 @@ final class FindInFilesModel {
     func load() async {
         let files = await FileTree.files(
             beneath: URL(fileURLWithPath: root), includeHidden: includeHidden)
-        let documents = await FileTextSearch.documents(for: files)
         guard !Task.isCancelled else { return }
-        self.documents = documents
+        let loaded = await FileTextSearch.documents(for: files)
+        guard !Task.isCancelled else { return }
+        documents = loaded.documents
+        limited = loaded.limited
         loading = false
         search()
     }
@@ -358,6 +379,12 @@ struct FindInFilesDialog: View {
             .frame(height: 34)
             .background(RoundedRectangle(cornerRadius: 8).fill(Theme.field))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border))
+
+            if model.limited {
+                Text("Some files were left out because this folder has more than 32 MB of text.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
 
             results
                 .frame(height: 320)

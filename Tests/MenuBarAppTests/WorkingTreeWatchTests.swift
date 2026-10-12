@@ -29,7 +29,7 @@ struct WorkingTreeWatchTests {
         let scratch = ScratchDirectory(prefix: "working-tree-watch")
         let worktree = scratch.path("linked")
         try repo.git("worktree", "add", "-q", "-b", "linked", worktree.path)
-        defer { try? repo.git("worktree", "remove", "--force", worktree.path) }
+        defer { _ = try? repo.git("worktree", "remove", "--force", worktree.path) }
 
         let inspections = RepositoryInspections()
         let watch = WorkingTreeWatch { path in

@@ -6,7 +6,7 @@ import Testing
 // Reports the height a view asks for when it is offered one, which is how a sheet that
 // cannot be made shorter gives itself away.
 private struct HeightProbe: Layout {
-    let report: (CGFloat) -> Void
+    let report: @Sendable (CGFloat) -> Void
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let size = subviews[0].sizeThatFits(proposal)
@@ -39,7 +39,7 @@ struct NewSessionSheetSizeTests {
                 .appendingPathComponent("avatar.png"),
             preferences: UserDefaults(suiteName: "sheet-size-\(UUID().uuidString)") ?? .standard)
         let measured = MeasuredHeight()
-        let host = NSHostingView(rootView: HeightProbe(report: { measured.value = $0 }) {
+        let host = NSHostingView(rootView: HeightProbe(report: { height in MainActor.assumeIsolated { measured.value = height } }) {
             NewSessionView(project: Project(name: "probe", path: NSTemporaryDirectory())) { _ in }
                 .environment(SessionRunner(paths: [:]))
                 .environment(DialogPresenter())
@@ -68,7 +68,7 @@ struct NewSessionSheetSizeTests {
             agentAvatarURL: scratch.url.appendingPathComponent("avatar.png"),
             preferences: UserDefaults(suiteName: "troubleshoot-size-\(UUID().uuidString)")!)
         let measured = MeasuredHeight()
-        let host = NSHostingView(rootView: HeightProbe(report: { measured.value = $0 }) {
+        let host = NSHostingView(rootView: HeightProbe(report: { height in MainActor.assumeIsolated { measured.value = height } }) {
             TroubleshootView(skills: SkillsManager(), initialProjectIDs: [project.id])
                 .environment(store)
                 .environment(SessionRunner(paths: [:]))

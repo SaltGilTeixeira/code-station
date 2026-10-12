@@ -2,13 +2,8 @@ import Darwin
 import Foundation
 import Observation
 
-// Runs the coding agent's CLI for chat sessions. One process per turn, started in the
-// project's own folder, with the agent's resume mechanism carrying the conversation
-// forward. The reply is streamed into the ProjectStore as it arrives; nothing about a
-// conversation is kept here, only the state that dies with the process. The one stretch:
-// a Claude Code turn that started a background task is held open until the task is done,
-// because the CLI can only wake the agent with the result while its process is still
-// alive.
+// Owns agent connections and turn execution. Replies stream into ProjectStore;
+// unsent input belongs to the composer and resolved launch settings to AgentLaunchConfiguration.
 @MainActor
 @Observable
 final class SessionRunner {
@@ -111,17 +106,8 @@ final class SessionRunner {
         return record
     }
 
-    // What is half-written in the composer and not sent yet. The detail pane is built
-    // again from nothing every time another session is picked, so this cannot live there
-    // without the words going with it. Kept apart from the record because it changes on
-    // every keystroke, and nothing that watches the session's work needs to hear of it.
-    private var drafts: [UUID: Draft] = [:]
-    // What the Troubleshoot tab has been given and has not sent yet. The pane keeps only
-    // the tab that is open, so a look at Chat and back would take the words with it.
-    private var briefs: [UUID: TroubleshootBrief] = [:]
-    // How far back through the earlier prompts the arrow keys have walked. Nothing on
-    // screen says a walk is under way, so it does not have to redraw anything.
-    @ObservationIgnored private var walks: [UUID: PromptWalk] = [:]
+    let composer = SessionComposerStore()
+
     // How wide the canvas is showing the design, in CSS pixels. The agent writes HTML it
     // never sees rendered, so without this it designs for a window it imagined and the
     // layout overflows the pane the user actually has open. Only known while the canvas
@@ -569,52 +555,6 @@ final class SessionRunner {
         }
     }
 
-    // An unsent composer: what has been typed, and what has been dropped or pasted onto it.
-    struct Draft: Equatable {
-        var text: String = ""
-        var attachments: [Attachment] = []
-        var customInstructions: String?
-
-        var isEmpty: Bool {
-            text.isBlank && attachments.isEmpty && customInstructions?.isBlank != false
-        }
-    }
-
-    func draft(_ sessionID: UUID) -> Draft { drafts[sessionID] ?? Draft() }
-
-    func editDraft(_ sessionID: UUID, _ change: (inout Draft) -> Void) {
-        var draft = drafts[sessionID] ?? Draft()
-        change(&draft)
-        drafts[sessionID] = draft.isEmpty ? nil : draft
-    }
-
-    func clearDraft(_ sessionID: UUID) {
-        drafts[sessionID] = nil
-        walks[sessionID] = nil
-    }
-
-    // An unsent troubleshoot brief: the problem, the evidence for it, and the two choices
-    // the tab makes about how the diagnosis runs.
-    struct TroubleshootBrief: Equatable {
-        var problem: String = ""
-        var incidentTime: String = ""
-        var attachments: [Attachment] = []
-        var environment = TroubleshootEnvironment.first()
-        var mcpServersEnabled = true
-    }
-
-    func brief(_ sessionID: UUID) -> TroubleshootBrief {
-        briefs[sessionID] ?? TroubleshootBrief()
-    }
-
-    func editBrief(_ sessionID: UUID, _ change: (inout TroubleshootBrief) -> Void) {
-        var brief = briefs[sessionID] ?? TroubleshootBrief()
-        change(&brief)
-        briefs[sessionID] = brief
-    }
-
-    func clearBrief(_ sessionID: UUID) { briefs[sessionID] = nil }
-
     // The canvas reports its own width as it is resized. Sub-pixel changes would rewrite
     // the system prompt for no visible difference, so only whole pixels are kept.
     func recordCanvasWidth(_ width: Double, for sessionID: UUID) {
@@ -640,16 +580,14 @@ final class SessionRunner {
         let item = queue[index]
         records[sessionID]?.queue.remove(at: index)
         preserveDraft(at: index, sessionID: sessionID)
-        walks[sessionID] = nil
-        drafts[sessionID] = Draft(text: item.text,
-                                  attachments: item.attachments,
-                                  customInstructions: item.customInstructions)
+        composer.restore(SessionComposerStore.Draft(text: item.text, attachments: item.attachments,
+                                                     customInstructions: item.customInstructions), in: sessionID)
     }
 
     // Moves what is in the composer into the queue at this position, so the prompt about
     // to take its place in the composer does not throw away what was typed.
     private func preserveDraft(at index: Int, sessionID: UUID) {
-        let current = draft(sessionID)
+        let current = composer.draft(sessionID)
         guard !current.isEmpty else { return }
         recordAddingIfMissing(sessionID).queue.insert(
             QueuedPrompt(text: current.text.trimmed,
@@ -658,66 +596,19 @@ final class SessionRunner {
             at: index)
     }
 
-    // MARK: - Walking back through earlier prompts
-
-    // How far back through the prompts already sent the arrow keys have gone.
-    private struct PromptWalk {
-        // The number of steps taken, where one is the most recent prompt.
-        var position: Int
-        // The text the walk last put in the composer. Once the box holds something else
-        // the prompt has been edited, which ends the walk: the arrows belong to the text
-        // being written rather than to the history behind it.
-        var shown: String
-    }
-
-    // The up arrow, once the field has decided the caret is on its first line. A prompt
-    // still waiting in the queue takes the press, since one about to run is the more
-    // pressing thing to get back; with the queue empty the press walks into the prompts
-    // already sent, a step further back each time. Returns whether there was anything to
-    // give, so the key can fall through to ordinary cursor movement when there was not.
     @discardableResult
     func recallEarlier(_ sessionID: UUID, store: ProjectStore) -> Bool {
-        let history = PromptHistory.entries(in: store.transcript(of: sessionID))
-        // A walk already under way carries on from where it reached, whatever is in the
-        // box, because the box holds what the last step put there.
-        if let walk = walks[sessionID], walk.shown == draft(sessionID).text {
-            let next = walk.position + 1
-            guard next <= history.count else { return false }
-            return show(history[next - 1], at: next, sessionID: sessionID)
-        }
-        // Starting one is different: with anything written the key keeps moving the
-        // cursor, so a prompt part way through being typed is never thrown away.
-        guard draft(sessionID).text.isEmpty else { return false }
-        if let waiting = queued(sessionID).last {
+        if !composer.isWalking(sessionID), composer.draft(sessionID).text.isEmpty,
+           let waiting = queued(sessionID).last {
             recall(waiting.id, sessionID: sessionID)
             return true
         }
-        // Files waiting to go with the next prompt are the start of one, so they hold the
-        // box in the same way written words do.
-        guard draft(sessionID).isEmpty, let recent = history.first else { return false }
-        return show(recent, at: 1, sessionID: sessionID)
+        return composer.recallEarlier(sessionID, history: PromptHistory.entries(in: store.transcript(of: sessionID)))
     }
 
-    // The down arrow, once the field has decided the caret is on its last line. Only a
-    // walk still showing what it produced answers it, stepping back towards the present
-    // and leaving the box empty again at the end, where the walk began.
     @discardableResult
     func recallLater(_ sessionID: UUID, store: ProjectStore) -> Bool {
-        guard let walk = walks[sessionID], walk.shown == draft(sessionID).text else { return false }
-        let previous = walk.position - 1
-        guard previous > 0 else {
-            clearDraft(sessionID)
-            return true
-        }
-        let history = PromptHistory.entries(in: store.transcript(of: sessionID))
-        guard previous <= history.count else { return false }
-        return show(history[previous - 1], at: previous, sessionID: sessionID)
-    }
-
-    private func show(_ text: String, at position: Int, sessionID: UUID) -> Bool {
-        walks[sessionID] = PromptWalk(position: position, shown: text)
-        drafts[sessionID] = Draft(text: text)
-        return true
+        composer.recallLater(sessionID, history: PromptHistory.entries(in: store.transcript(of: sessionID)))
     }
 
     // MARK: - Clearing the context
@@ -991,11 +882,10 @@ final class SessionRunner {
         // belong to, so they come back to the composer with it.
         let instructions = transcript.indices.contains(index + 1)
             && transcript[index + 1].role == .instructions ? transcript[index + 1].text : nil
-        walks[sessionID] = nil
-        drafts[sessionID] = Draft(
+        composer.restore(SessionComposerStore.Draft(
             text: message.text,
             attachments: (message.attachments ?? []).map { Attachment(url: URL(fileURLWithPath: $0)) },
-            customInstructions: instructions)
+            customInstructions: instructions), in: sessionID)
 
         store.truncateTranscript(from: messageID, in: sessionID)
         store.markSessionSeen(sessionID)
@@ -1072,7 +962,7 @@ final class SessionRunner {
     // what was typed, but it may never send over it, replace it, or throw it away.
     func sendSuggestion(_ sessionID: UUID, store: ProjectStore) {
         guard let suggestion = records[sessionID]?.suggestion,
-              draft(sessionID).text.isBlank else { return }
+              composer.draft(sessionID).text.isBlank else { return }
         records[sessionID]?.suggestion = nil
         send(suggestion, sessionID: sessionID, store: store)
     }
@@ -1082,7 +972,7 @@ final class SessionRunner {
     func takeSuggestion(_ sessionID: UUID) {
         guard let suggestion = records[sessionID]?.suggestion else { return }
         records[sessionID]?.suggestion = nil
-        editDraft(sessionID) { draft in
+        composer.editDraft(sessionID) { draft in
             draft.text = draft.text.isBlank ? suggestion : draft.text + " " + suggestion
         }
     }
@@ -1384,406 +1274,6 @@ final class SessionRunner {
         return next
     }
 
-    // Extra system prompt appended to every Claude Code session started by the app.
-    // The app renders interactive choices as a modal, and the CLI's default is to write
-    // options as an inline numbered list instead of calling AskUserQuestion, so tell it
-    // to prefer the tool whenever the choice is a small closed set. The second paragraph
-    // is about waiting: a build or a test run is long enough that the agent reaches for a
-    // watcher loop, and the usual one it writes can never end. The last is the chart
-    // block: the app can draw one, and nothing the agent can see would tell it so.
-    nonisolated static let appendedSystemPrompt = """
-        When you need the user to pick between 2-4 mutually exclusive options before \
-        proceeding, use the AskUserQuestion tool. Do not present the options as an inline \
-        numbered list ending in "Which?" or similar. The host renders AskUserQuestion as \
-        a modal with clickable choices, while inline lists have no clickable options and \
-        no "Other" escape hatch. Prose questions are only for open-ended clarifications \
-        where a fixed option set doesn't fit.
-
-        Do not start a shell loop to watch work you have already backgrounded: you are \
-        told when it finishes, so the loop only spends the session. When you do have to \
-        wait, wait on something the wait itself cannot affect, such as a line appearing \
-        in an output file or `wait` on a pid you captured. Never wait on `pgrep -f` for a \
-        pattern that appears in your own command, such as \
-        `while pgrep -qf some-helper; do sleep 20; done`: `pgrep -f` reads whole command \
-        lines, so the loop matches the shell running it and waits forever. If you must \
-        match on a name, hide the pattern from itself as `pgrep -qf '[s]ome-helper'`.
-
-        \(TranscriptChartSpec.agentInstructions)
-        """
-
-    nonisolated static func designSystemPrompt(artifactURL: URL,
-                                               canvasWidth: Double? = nil,
-                                               ambition: DesignAmbition = .fallback) -> String {
-        // Without a number the agent has nothing to check its layout against, and a made-up
-        // one would be worse than silence, so the paragraph is dropped when the canvas is
-        // not on screen to report its width.
-        let viewport = canvasWidth.map { width in
-            """
-
-
-            The design's layout is \(Int(width))px wide right now. Canvas zoom does not change \
-            the layout width. Without an explicit screen width in design.json, the layout \
-            follows the pane as the user resizes it, down to \
-            \(Int(DesignSplitLayout.minimumCanvasWidth))px. Check the layout fits its declared \
-            size, or the available pane width for a responsive design, before replying. \
-            Fixed-width children of a row have to sum to less than \
-            the row they sit in, counting gaps and padding, and anything that can be squeezed \
-            needs its own min-width and overflow rule so its contents cannot spill across a \
-            neighbour.
-            """
-        } ?? ""
-
-        // A model given no aesthetic instruction falls back to the same handful of looks,
-        // so the prompt names them and leaves the rest of the taste to the product itself.
-        return """
-        You are working in Design mode. Create and refine the visual result the user asks \
-        for, such as a product screen, interaction flow, prototype, presentation, diagram, \
-        or one-page visual. This is a design workspace, not a normal implementation \
-        session.
-
-        The live canvas always renders this file:
-        \(artifactURL.path)\(viewport)
-
-        On every turn, create or update that file before replying. The result must be a \
-        complete standalone HTML document with its CSS and JavaScript embedded. Do not use \
-        network dependencies. Copy or embed any needed local assets into the artifact's \
-        directory. Build the actual visible design, not a Markdown design brief or a prose \
-        description of one. Make useful interactions work in the canvas.
-
-        The app already provides the design prompt composer outside the canvas. Keep it \
-        as the only place to submit design requests. Do not add a second design prompt \
-        form or a simulated agent chat to the generated page. Controls that belong to \
-        the product being designed should still work as part of its prototype.
-
-        When the result is mainly artwork, such as a comic, illustration, poster, mascot, \
-        or photo-like scene, and you have an image generation tool, draw the artwork with \
-        that tool instead of building it from CSS or SVG shapes. Save it as a PNG in an \
-        `assets` folder in the artifact directory, and place it in the HTML page with \
-        useful alt text. Keep the page itself in HTML, so titles, controls, and any text \
-        the user may want to edit stay real text. Save the exact image prompt next to the \
-        image so a later revision can build on it. Do not use generated images for \
-        product screens or interface parts, because they have to stay real HTML to be \
-        built from.
-
-        When the design contains more than one screen, create one standalone HTML file per \
-        screen and write `design.json` in the artifact directory with this shape:
-        {"screens":[{"id":"home","title":"Home","path":"index.html","width":1440,"height":900}]}
-        `index.html` remains the default screen. Keep ids and paths stable across revisions.
-        Declare width and height for fixed-size artboards, including single-screen designs. \
-        The canvas renders at that size and scales the whole artboard to fit. Omit dimensions \
-        for responsive pages that should follow the available pane size.
-
-        Also maintain `handoff.md` in the artifact directory. Keep it concise and current. \
-        Record the goal, the scoped change from the existing product when there is one, screens \
-        and states, interactions, responsive and accessibility expectations, existing project \
-        components and tokens to reuse, decisions, non-goals, open questions, and acceptance \
-        checks. It supports implementation but does not replace the visible HTML result.
-
-        Read the relevant code and project instructions before designing. Reuse the \
-        product's real visual language, tokens, components, content patterns, and assets \
-        when they exist. Keep production source files unchanged unless the user explicitly \
-        asks to move from design into implementation. Treat follow-up prompts as revisions \
-        to the current canvas rather than unrelated new files.
-
-        \(designGrounding(ambition))
-
-        Generated design clusters around a few looks. They are defaults rather than \
-        choices, so do not spend a free decision on one: a cream background with a serif \
-        display and a terracotta accent; near-black with a single acid accent; hairline \
-        rules in dense broadsheet columns; identical rounded cards under the same soft \
-        grey shadow; and the template chrome of tracked-out all-caps eyebrows, middle-dot \
-        meta strings, spaced em dashes, tinted near-black, monospace data labels, and a \
-        trailing arrow on every link. When the user asks for one of these, give it to them.
-
-        \(designEmphasis(ambition))
-
-        Words are design content. Name things the way a user would say them, write a \
-        button as the action it performs, keep that name through the flow, and make errors \
-        and empty states say what to do next.
-        """
-    }
-
-    // The paragraphs that set how far a design goes. Everything else in the Design prompt
-    // is the same at every level, so a level only ever changes the taste it asks for.
-    private nonisolated static func designGrounding(_ ambition: DesignAmbition) -> String {
-        switch ambition {
-        case .restrained:
-            """
-            Ground the design in what the product is, who uses it, and the job the screen \
-            does. When the design extends an existing product, its established palette, type, \
-            spacing, and components win over any new idea. Add no component, colour, or visual \
-            idea the product does not already have, so the result can be built from what \
-            exists, and keep the change as small as the request allows. When there is nothing \
-            to match, use a calm palette and plain, readable typefaces that suit this subject.
-            """
-        case .balanced:
-            """
-            Ground the design in what the product is, who uses it, and the job the screen \
-            does. When the design extends an existing product, its established palette, type, \
-            spacing, and components win over any new idea, and the job is to show that product \
-            at its best. When there is nothing to match, pick a palette and typefaces that \
-            belong to this subject rather than ones that would fit anything.
-
-            Hold the result to the standard of finished product work, not a sketch. Set a \
-            deliberate type scale and spacing rhythm and keep alignment exact. Fill the screens \
-            with realistic content in realistic amounts, including long names and empty, \
-            loading, and error states where they apply. Give every interactive element its \
-            hover, focus, pressed, and disabled states. Put the effort into finish rather than \
-            decoration: an adequate mockup is not done, and neither is a busy one.
-            """
-        case .allOut:
-            """
-            Treat this design as a showcase piece: the work a senior product designer would \
-            put in their portfolio. Go all out. Ground it in what the product is, who uses it, \
-            and the job the screen does. When the design extends an existing product, build on \
-            its palette, type, spacing, and components and raise the polish within that \
-            language rather than replacing it, so it reads as the same product at its very \
-            best and can still be built. When there is nothing to match, choose a bold, \
-            distinctive direction that belongs to this subject and would not fit anything else.
-
-            Put the effort into craft. Set a deliberate type scale and spacing rhythm and keep \
-            alignment exact. Fill the screens with rich, realistic content in realistic amounts, \
-            including long names and empty, loading, and error states where they apply. Give \
-            every interactive element its hover, focus, pressed, selected, and disabled states. \
-            A plain or merely adequate result is not done.
-            """
-        }
-    }
-
-    private nonisolated static func designEmphasis(_ ambition: DesignAmbition) -> String {
-        switch ambition {
-        case .restrained:
-            """
-            Let one element carry the design and keep the rest quiet. Borders, dividers, \
-            numbers, and labels have to encode something real, so number things only when the \
-            content is a sequence. Keep motion for what answers the user's action, with no \
-            entrance or reveal animations.
-            """
-        case .balanced:
-            """
-            Let one element carry the design and keep the rest quiet. Borders, dividers, \
-            numbers, and labels have to encode something real, so number things only when the \
-            content is a sequence. Keep motion for what answers the user's action, plus at \
-            most one deliberate reveal.
-            """
-        case .allOut:
-            """
-            Give the design one clear lead, and let the supporting parts be richly made rather \
-            than plain. Borders, dividers, numbers, and labels still have to encode something \
-            real, so number things only when the content is a sequence. Use motion to make the \
-            design feel alive: smooth transitions between states and a few deliberate reveals, \
-            all of which stop when the user asks for reduced motion.
-            """
-        }
-    }
-
-    nonisolated static func implementationSystemPrompt(referenceURL: URL) -> String {
-        """
-        You are implementing an approved Design in the production project. The immutable \
-        reference materials are in:
-        \(referenceURL.path)
-
-        Treat the Design as a scoped change to the existing product, not a complete \
-        specification of the application. Inspect the current implementation first and \
-        identify the gap between it, the user's request, and the Design. Preserve working \
-        behavior, structure, screens, and content outside that gap. Anything omitted from \
-        the Design remains unchanged. Prefer the smallest coherent change, and do not rebuild \
-        or replace an existing application, page, or feature unless the user or handoff \
-        explicitly asks for that scope.
-
-        Read `handoff.md`, `design.json`, and the referenced HTML screens before editing. \
-        Treat them as visual, content, and interaction references rather than production \
-        source to copy blindly. Reuse the project's existing architecture, components, \
-        tokens, assets, and test patterns. Keep the reference files unchanged. Implement \
-        the requested behavior in production source files and run the relevant tests.
-        """
-    }
-
-    // Everything the CLI is run with for one turn. The session's own choices win, the app
-    // defaults fill the gaps for mutable run controls, and anything neither has chosen is
-    // left off rather than sent as a guess. A choice that does not belong to this agent
-    // would be refused, so it counts as unchosen here. Copilot alone takes the prompt as
-    // an argument, and a new Copilot conversation is given its id up front rather than
-    // read back off the stream.
-    nonisolated static func arguments(agent: AgentKind = .claudeCode,
-                                      settings: SessionSettings, defaults: SessionSettings,
-                                      addDirectories: [String] = [], writableRoots: [String] = [],
-                                      resume: String? = nil,
-                                      newSessionID: String? = nil,
-                                      prompt: String? = nil,
-                                      mcpConfigPath: String? = nil,
-                                      additionalSystemPrompt: String? = nil,
-                                      suggestsPrompts: Bool = false,
-                                      discovered: [ModelChoice.Option]? = nil) -> [String] {
-        // The model belongs to the session and can be changed explicitly between turns.
-        // Falling back to the current app default would change it without the user asking.
-        let model = ModelChoice.valid(settings.model, for: agent, discovered: discovered)
-        let effort = EffortChoice.valid(settings.effort ?? defaults.effort, for: agent,
-                                        model: model, discovered: discovered)
-        let codexSandbox = CodexSandboxMode.resolved(settings.codexSandboxMode
-            ?? defaults.codexSandboxMode)
-        let copilotAccess = CopilotAccessMode.resolved(settings.copilotAccessMode
-            ?? defaults.copilotAccessMode)
-
-        switch agent {
-        case .claudeCode:
-            // The app is what puts the questions on screen, so it always says which ones
-            // it wants rather than letting the CLI's own config decide.
-            let permissionMode = PermissionMode(
-                stored: settings.permissionMode ?? defaults.permissionMode).rawValue
-
-            // Streaming input is what makes the CLI able to ask anything back: with
-            // "--permission-prompt-tool stdio" it puts permission prompts and the agent's
-            // own questions on stdout as control requests and waits for an answer on
-            // stdin. Without it a prompt is auto-denied and the turn carries on half-done.
-            let systemPrompt = [Self.appendedSystemPrompt, additionalSystemPrompt]
-                .compactMap { $0 }
-                .joined(separator: "\n\n")
-            var arguments = ["-p", "--output-format", "stream-json", "--input-format", "stream-json",
-                             "--permission-prompt-tool", "stdio", "--verbose",
-                             "--permission-mode", permissionMode,
-                             "--append-system-prompt", systemPrompt]
-            if let model { arguments += ["--model", model] }
-            if let effort { arguments += ["--effort", effort] }
-            // The CLI predicts the next prompt for nothing on top of the turn, but only
-            // says so when it is asked both on the command line and in the environment.
-            // It keeps its own counsel about when there is nothing worth predicting: a
-            // conversation still finding its feet, or a turn that ended badly, says
-            // nothing at all, and the composer simply has no row that turn.
-            if suggestsPrompts { arguments += ["--prompt-suggestions", "true"] }
-            if settings.mcpServersEnabled == false {
-                arguments += ["--strict-mcp-config", "--mcp-config", #"{"mcpServers":{}}"#]
-            } else if let mcpConfigPath {
-                arguments += ["--strict-mcp-config", "--mcp-config", mcpConfigPath]
-            }
-            if !addDirectories.isEmpty { arguments += ["--add-dir"] + addDirectories }
-            // Forking on every resume gives each turn a fresh id and leaves the old one
-            // pointing at the conversation as it stood. Those frozen ids are what the
-            // checkpoints on user messages record, and what rewinding resumes from.
-            if let resume, !resume.isEmpty { arguments += ["--resume", resume, "--fork-session"] }
-            return arguments
-
-        case .codex:
-            // Codex has no streaming input for permission questions. The sandbox goes
-            // over as a config override because the resume subcommand has no --sandbox
-            // option. Its full-access flag works for both initial and resumed turns;
-            // the approve-for-me flag needs config overrides when resuming.
-            var arguments = ["exec"]
-            if let resume, !resume.isEmpty { arguments += ["resume", resume] }
-            arguments += ["--json", "--skip-git-repo-check"]
-            // Codex only puts reasoning items on the stream when summaries are asked
-            // for; its exec default leaves them out and the transcript would show no
-            // thinking at all.
-            arguments += ["-c", "model_reasoning_summary=\"detailed\""]
-            if let additionalSystemPrompt {
-                arguments += ["-c", "developer_instructions=\(tomlQuoted(additionalSystemPrompt))"]
-            }
-            switch codexSandbox {
-            case .workspaceWrite, .approveForMe:
-                arguments += ["-c", "sandbox_mode=\"workspace-write\""]
-                // A worktree session keeps its git metadata in the main checkout's .git
-                // directory, outside the sandbox. Without write access there git cannot
-                // even stage a file, so that directory goes in as an extra writable root.
-                if !writableRoots.isEmpty {
-                    let list = writableRoots
-                        .map { "\"\($0.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\"" }
-                        .joined(separator: ",")
-                    arguments += ["-c", "sandbox_workspace_write.writable_roots=[\(list)]"]
-                }
-                if codexSandbox == .approveForMe {
-                    if resume == nil || resume?.isEmpty == true {
-                        arguments.append("--approve-for-me")
-                    } else {
-                        arguments += ["-c", "approval_policy=\"on-failure\"",
-                                      "-c", "approvals_reviewer=\"auto_review\""]
-                    }
-                }
-            case .fullAccess:
-                arguments.append("--dangerously-bypass-approvals-and-sandbox")
-            }
-            if let model { arguments += ["--model", model] }
-            if let effort { arguments += ["-c", "model_reasoning_effort=\"\(effort)\""] }
-            if let override = disabledMCPServersOverride(settings.disabledMCPServers ?? []) {
-                arguments += ["-c", override]
-            }
-            // The resume subcommand does not accept --add-dir. Resumed turns receive
-            // the same paths through writable_roots above and keep the directory map
-            // from their existing conversation.
-            if resume == nil {
-                for directory in addDirectories { arguments += ["--add-dir", directory] }
-            }
-            // The prompt goes over stdin, which "-" asks for; passed as an argument, a
-            // prompt starting with a dash would be read as a flag.
-            arguments.append("-")
-            return arguments
-
-        case .copilot:
-            // Prompt mode runs the turn to the end and prints the session log as JSON
-            // lines. It refuses to run at all unless tools may run without asking, so
-            // the access choice is only about how far past the session's folders they
-            // reach. Any guidance for the turn rides in the prompt: there is no flag for
-            // a system prompt of its own.
-            let prompt = [additionalSystemPrompt, prompt].compactMap { $0 }
-                .joined(separator: "\n\n")
-            var arguments = ["-p", prompt, "--output-format", "json",
-                             "--no-auto-update", "--no-color", "--no-ask-user"]
-            if let resume, !resume.isEmpty {
-                arguments += ["--resume", resume]
-            } else if let newSessionID, !newSessionID.isEmpty {
-                arguments += ["--session-id", newSessionID]
-            }
-            switch copilotAccess {
-            case .workspace: arguments.append("--allow-all-tools")
-            case .fullAccess: arguments.append("--allow-all")
-            }
-            if let model { arguments += ["--model", model] }
-            if let effort { arguments += ["--effort", effort] }
-            if settings.mcpServersEnabled == false {
-                // No one flag turns every configured server off, so the built-in one
-                // goes here and the rest go by name below.
-                arguments.append("--disable-builtin-mcps")
-            }
-            for server in settings.disabledMCPServers ?? [] where !server.name.isEmpty {
-                arguments += ["--disable-mcp-server", server.name]
-            }
-            for directory in addDirectories { arguments += ["--add-dir", directory] }
-            return arguments
-        }
-    }
-
-    private nonisolated static func tomlQuoted(_ value: String) -> String {
-        let escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
-            .replacingOccurrences(of: "\t", with: "\\t")
-        return "\"\(escaped)\""
-    }
-
-    // A plugin-provided server may appear in `codex mcp list` without existing in
-    // config.toml. Supplying only `enabled=false` creates a transport-less table that
-    // Codex rejects before startup. One inline table preserves every disabled entry and
-    // gives it an inert transport, which also prevents a plugin from adding it back.
-    private nonisolated static func disabledMCPServersOverride(
-        _ servers: [DisabledMCPServer]
-    ) -> String? {
-        let entries = servers
-            .filter { !$0.name.isEmpty }
-            .sorted { $0.name < $1.name }
-            .map { server in
-                let transport = switch server.transport {
-                case .stdio:
-                    "command=\"/usr/bin/false\""
-                case .streamableHTTP:
-                    "url=\"https://disabled.invalid\""
-                }
-                return "\(tomlQuoted(server.name))={enabled=false,\(transport)}"
-            }
-        guard !entries.isEmpty else { return nil }
-        return "mcp_servers={\(entries.joined(separator: ","))}"
-    }
-
     // Claude Code takes one block of text, so a file goes over as its path and the agent
     // reads it itself. That is also how images work: the Read tool takes a picture back.
     nonisolated static func prompt(_ text: String, with attachments: [Attachment]) -> String {
@@ -1884,9 +1374,7 @@ final class SessionRunner {
         stopStartedGroups(sessionID, reason: "session removed")
         codexContextRefreshes.removeValue(forKey: sessionID)?.task.cancel()
         records[sessionID] = nil
-        drafts[sessionID] = nil
-        briefs[sessionID] = nil
-        walks[sessionID] = nil
+        composer.remove(sessionID)
         canvasWidths[sessionID] = nil
     }
 
@@ -2089,7 +1577,7 @@ final class SessionRunner {
             projectDirectories + attachmentDirectories + designDirectories
                 + referenceDirectories + session.grantedDirectories)
         let writableRoots = unique(additionalDirectories + store.gitMetadataDirectories(for: session))
-        let arguments = Self.arguments(
+        let configuration = AgentLaunchConfiguration(
             agent: agent,
             settings: session.settings ?? SessionSettings(),
             defaults: defaults(for: agent),
@@ -2102,17 +1590,16 @@ final class SessionRunner {
             prompt: promptForAgent,
             mcpConfigPath: mcpConfigURL?.path,
             additionalSystemPrompt: designArtifact.map {
-                Self.designSystemPrompt(artifactURL: $0,
+                AgentInstructions.designSystemPrompt(artifactURL: $0,
                                         canvasWidth: canvasWidths[session.id],
                                         ambition: DesignAmbition.valid(session.settings?.designAmbition)
                                             ?? Preferences.designAmbition())
-            } ?? implementationReference.map(Self.implementationSystemPrompt),
+            } ?? implementationReference.map(AgentInstructions.implementationSystemPrompt),
             suggestsPrompts: suggestsPrompts,
             discovered: discoveredModels[agent])
         let serverLaunch = persistentAgentSessions && agent != .claudeCode
-            ? try AgentServerLaunch(agent: agent, arguments: arguments,
-                                    directory: workingDirectories[0], resumeID: resume) : nil
-        return TurnPlan(agent: agent, arguments: serverLaunch?.arguments ?? arguments, prompt: promptForAgent,
+            ? try AgentServerLaunch(configuration: configuration, directory: workingDirectories[0]) : nil
+        return TurnPlan(agent: agent, arguments: serverLaunch?.arguments ?? configuration.arguments, prompt: promptForAgent,
                         resumeSessionID: resume, presetSessionID: presetSessionID,
                         suggestsPrompts: suggestsPrompts, serverLaunch: serverLaunch)
     }
@@ -2807,7 +2294,6 @@ final class SessionRunner {
                     } else {
                         records[sessionID]?.wait = Wait(tasks: turn.holdsFor, since: Date())
                     }
-                    turn.needsFreshReply = true
                     setState(.waiting, for: sessionID)
                     if !alreadyWaiting { startWaitWatchdog(sessionID, token: turn.token, store: store) }
                     // A prompt typed while the agent was working can go down the open
@@ -2932,7 +2418,6 @@ final class SessionRunner {
     // was ended by hand.
     private func endHold(_ turn: Turn, sessionID: UUID) {
         turn.waitingOnTasks = false
-        turn.needsFreshReply = false
         records[sessionID]?.wait = nil
         waitWatchdogs.removeValue(forKey: sessionID)?.cancel()
     }
@@ -2991,7 +2476,7 @@ final class SessionRunner {
     // when a background task finishes. Without this the follow-up would keep writing
     // into the bubble of the turn that already answered.
     private func freshReply(_ turn: Turn, sessionID: UUID, store: ProjectStore) {
-        guard turn.summary == nil, turn.needsFreshReply else { return }
+        guard turn.summary == nil, turn.waitingOnTasks else { return }
         endHold(turn, sessionID: sessionID)
         removeReplyIfEmpty(turn, sessionID: sessionID, store: store)
         openFreshReply(turn, sessionID: sessionID, store: store)
@@ -3203,7 +2688,7 @@ final class SessionRunner {
         // Warnings on stderr are common and harmless. Codex and Copilot must also report
         // their terminal event, since an exit code of zero after a broken stream does not
         // prove the turn reached completion.
-        let missingCompletion = !turn.agent.asksPermissions && !turn.receivedCompletion
+        let missingCompletion = turn.agent != .claudeCode && !turn.receivedCompletion
         guard turn.failure != nil || status != 0 || missingCompletion else {
             SessionLog.note("turn finished", session: sessionID)
             records[sessionID]?.lastEnding = TurnEnding(started: turn.startedAt, ended: Date(),
@@ -3298,7 +2783,7 @@ final class SessionRunner {
         store.release(sessionID, for: .running)
 
         let completedNormally = !turn.stopRequested && turn.failure == nil && status == 0
-            && (turn.agent.asksPermissions || turn.receivedCompletion)
+            && (turn.agent == .claudeCode || turn.receivedCompletion)
         let text: String? = if completedNormally {
             switch attempt.mode {
             case .claudeRecap:
@@ -3449,9 +2934,6 @@ final class SessionRunner {
         // prompt is sent into the open pipe. This is what holds the input open.
         var waitingOnTasks = false
         var endingWait = false
-        // True when whatever streams next belongs in a reply bubble of its own, because
-        // the last one was already closed off by a result.
-        var needsFreshReply = false
         // Whether this turn replaced the conversation with a summary, which is what makes
         // the last reading of the window no longer describe anything.
         var compacted = false

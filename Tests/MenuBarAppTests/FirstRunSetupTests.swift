@@ -111,7 +111,7 @@ struct FirstRunSetupTests {
             let project = try #require(store.projects.first)
             #expect(store.selectedProjectID == project.id)
             #expect(store.selection == nil)
-            #expect(store.projectToReveal == project.id)
+            #expect(store.navigation.projectToReveal == project.id)
             #expect(store.sessions.isEmpty)
             #expect(try repository.git("rev-parse", "HEAD") == originalHead)
             #expect(try repository.git("worktree", "list", "--porcelain") == originalWorktrees)

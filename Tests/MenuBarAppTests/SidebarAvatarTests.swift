@@ -67,6 +67,7 @@ struct SidebarAvatarTests {
         #expect(changedTaskIndex != originalTaskIndex)
         #expect(changedWorkspaceIndex != originalWorkspaceIndex)
 
+        #expect(store.save())
         let restored = ProjectStore(storeURL: storeURL)
         #expect(restored.project(first.id)?.sidebarAvatarIndex == changedProjectIndex)
         #expect(restored.project(task.id)?.sidebarAvatarIndex == changedTaskIndex)

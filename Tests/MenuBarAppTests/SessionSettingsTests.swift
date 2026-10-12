@@ -65,7 +65,7 @@ struct SessionSettingsTests {
     private let appDefaults = SessionSettings(permissionMode: "acceptEdits")
 
     @Test func leavesUnsetChoicesOffTheCommandLine() {
-        let arguments = SessionRunner.arguments(settings: SessionSettings(), defaults: appDefaults)
+        let arguments = AgentLaunchConfiguration(settings: SessionSettings(), defaults: appDefaults).arguments
         #expect(!arguments.contains("--model"))
         #expect(!arguments.contains("--effort"))
         #expect(!arguments.contains("--add-dir"))
@@ -78,10 +78,10 @@ struct SessionSettingsTests {
 
     @Test func sendsWhatTheSessionChose() {
         let settings = SessionSettings(model: "opus", effort: "high", permissionMode: "manual")
-        let arguments = SessionRunner.arguments(settings: settings,
+        let arguments = AgentLaunchConfiguration(settings: settings,
                                                 defaults: appDefaults,
                                                 addDirectories: ["/tmp/shots"],
-                                                resume: "abc-123")
+                                                resume: "abc-123").arguments
         #expect(pair(arguments, after: "--model") == "opus")
         #expect(pair(arguments, after: "--effort") == "high")
         #expect(pair(arguments, after: "--permission-mode") == "manual")
@@ -96,7 +96,7 @@ struct SessionSettingsTests {
     // defaults between turns.
     @Test func doesNotInheritTheAppDefaultModel() {
         let defaults = SessionSettings(model: "sonnet", effort: "low", permissionMode: "auto")
-        let arguments = SessionRunner.arguments(settings: SessionSettings(), defaults: defaults)
+        let arguments = AgentLaunchConfiguration(settings: SessionSettings(), defaults: defaults).arguments
         #expect(!arguments.contains("--model"))
         #expect(pair(arguments, after: "--effort") == "low")
         #expect(pair(arguments, after: "--permission-mode") == "auto")
@@ -104,8 +104,8 @@ struct SessionSettingsTests {
 
     @Test func theSessionWinsOverTheAppDefault() {
         let defaults = SessionSettings(model: "sonnet", effort: "low", permissionMode: "auto")
-        let arguments = SessionRunner.arguments(settings: SessionSettings(model: "haiku"),
-                                                defaults: defaults)
+        let arguments = AgentLaunchConfiguration(settings: SessionSettings(model: "haiku"),
+                                                defaults: defaults).arguments
         #expect(pair(arguments, after: "--model") == "haiku")
         // Only the model was overridden, so the rest still comes from the app.
         #expect(pair(arguments, after: "--effort") == "low")
@@ -113,9 +113,9 @@ struct SessionSettingsTests {
     }
 
     @Test func emptyChoicesAreTreatedAsUnset() {
-        let arguments = SessionRunner.arguments(settings: SessionSettings(model: "", effort: ""),
+        let arguments = AgentLaunchConfiguration(settings: SessionSettings(model: "", effort: ""),
                                                 defaults: SessionSettings(permissionMode: "auto"),
-                                                resume: "")
+                                                resume: "").arguments
         #expect(!arguments.contains("--model"))
         #expect(!arguments.contains("--effort"))
         #expect(!arguments.contains("--resume"))
@@ -125,21 +125,21 @@ struct SessionSettingsTests {
     // Nothing chosen anywhere still has to name a mode: the app is what shows the
     // questions, so it never leaves that to the CLI's own configuration.
     @Test func alwaysNamesAPermissionMode() {
-        let arguments = SessionRunner.arguments(settings: SessionSettings(),
-                                                defaults: SessionSettings())
+        let arguments = AgentLaunchConfiguration(settings: SessionSettings(),
+                                                defaults: SessionSettings()).arguments
         #expect(pair(arguments, after: "--permission-mode") == "acceptEdits")
     }
 
     // The app draws the choices itself, so every Claude session is asked to reach for the
     // tool that puts them on screen. Codex has no such tool and would refuse the flag.
     @Test func asksClaudeToUseTheModalChooser() {
-        let claude = SessionRunner.arguments(settings: SessionSettings(), defaults: appDefaults)
+        let claude = AgentLaunchConfiguration(settings: SessionSettings(), defaults: appDefaults).arguments
         #expect(pair(claude, after: "--append-system-prompt")
-            == SessionRunner.appendedSystemPrompt)
+            == AgentInstructions.appendedSystemPrompt)
 
-        let codex = SessionRunner.arguments(agent: .codex,
+        let codex = AgentLaunchConfiguration(agent: .codex,
                                             settings: SessionSettings(),
-                                            defaults: appDefaults)
+                                            defaults: appDefaults).arguments
         #expect(!codex.contains("--append-system-prompt"))
     }
 

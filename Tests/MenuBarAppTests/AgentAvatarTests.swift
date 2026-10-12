@@ -374,6 +374,7 @@ struct AgentAvatarTests {
         store.setAgentAvatarName("agent-avatar-2.png", for: session.id)
 
         #expect(store.session(session.id)?.agentAvatarName == "agent-avatar-2.png")
+        #expect(store.save())
         let restored = try #require(ProjectStore(storeURL: index).session(session.id))
         #expect(restored.agentAvatarName == "agent-avatar-2.png")
     }

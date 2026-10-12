@@ -64,7 +64,7 @@ struct SidebarNavigationTests {
         #expect(harness.store.selectedProjectID == project.id)
         #expect(Preferences.sidebarExpansion()[project.id] == true)
         // A click on the row is already where the eye is, so nothing is pointed out.
-        #expect(harness.store.sidebarHighlight == nil)
+        #expect(harness.store.navigation.sidebarHighlight == nil)
     }
 
     @Test func aWorkspaceOpenedFromElsewhereIsScrolledToAndPointedOut() async throws {
@@ -101,9 +101,9 @@ struct SidebarNavigationTests {
         let document = try #require(scroll.documentView)
         // The workspace sorts last, so the rail has to travel to the bottom of the list.
         #expect(scroll.documentVisibleRect.maxY >= document.bounds.maxY - 14)
-        #expect(harness.store.sidebarHighlight == workspace.id)
+        #expect(harness.store.navigation.sidebarHighlight == workspace.id)
 
-        #expect(await waitUntil { harness.store.sidebarHighlight == nil })
+        #expect(await waitUntil { harness.store.navigation.sidebarHighlight == nil })
     }
 
     @Test func startingASessionLeavesTheRailWhereTheUserPutIt() async throws {
@@ -166,7 +166,7 @@ struct SidebarNavigationTests {
         harness.store.selectSession(target.id)
         await harness.settle()
         #expect(harness.store.selection == .session(target.id))
-        #expect(harness.store.sessionToReveal == nil)
+        #expect(harness.store.navigation.sessionToReveal == nil)
         // The oldest card is the last one in the list.
         #expect(scroll.documentVisibleRect.maxY >= document.bounds.maxY - 14)
     }

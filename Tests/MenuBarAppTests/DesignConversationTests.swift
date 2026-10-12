@@ -137,7 +137,7 @@ struct DesignConversationViewTests {
                 String(repeating: "Keep the reader's place in this conversation. ", count: 12)), to: session.id)
         }
         let runner = SessionRunner(paths: [.codex: "/usr/bin/true"])
-        runner.editDraft(session.id) { $0.text = "Keep this draft" }
+        runner.composer.editDraft(session.id) { $0.text = "Keep this draft" }
         let preferences = try #require(UserDefaults(suiteName: "design-floating-\(UUID().uuidString)"))
         let hosting = NSHostingController(rootView:
             DesignView(sessionID: session.id)
@@ -222,7 +222,7 @@ struct DesignConversationViewTests {
         store.append(ChatMessage(role: .assistant, text: "A response while the panel is folded."), to: session.id)
         try await settle()
         #expect(!observer.expanded)
-        #expect(runner.draft(session.id).text == "Keep this draft")
+        #expect(runner.composer.draft(session.id).text == "Keep this draft")
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             let space = try #require(NSEvent.keyEvent(with: type, location: .zero,
                 modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
@@ -239,7 +239,7 @@ struct DesignConversationViewTests {
         #expect(descendants(hosting.view).contains { $0 === viewport })
         #expect(selectedText.selectedRange() == NSRange(location: 2, length: 4))
         let attachment = Attachment(url: scratch.path("reference.png"))
-        runner.attach([attachment], to: session.id)
+        runner.composer.attach([attachment], to: session.id)
         try await settle()
         let expandedFrame = observer.convert(observer.bounds, to: nil)
         try click(CGPoint(x: expandedFrame.maxX - 28, y: expandedFrame.maxY - 26))
@@ -265,8 +265,8 @@ struct DesignConversationViewTests {
         #expect(!observer.minimized)
         #expect(!observer.expanded)
         #expect(observer.bounds.height == 326)
-        #expect(runner.draft(session.id).text == "Keep this draft")
-        #expect(runner.draft(session.id).attachments == [attachment])
+        #expect(runner.composer.draft(session.id).text == "Keep this draft")
+        #expect(runner.composer.draft(session.id).attachments == [attachment])
         for width: CGFloat in [480, 700, 1000] {
             window.setContentSize(CGSize(width: width, height: 800))
             try await settle()

@@ -37,7 +37,7 @@ final class LoginItem {
 @MainActor
 @Observable
 final class AppSettings {
-    var changesDiffLayout = "Unified diff"
+    var changesDiffLayout = DiffLayout.unified
     private let agentAvatarURL: URL
     @ObservationIgnored private let preferences: UserDefaults
 

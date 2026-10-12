@@ -156,6 +156,7 @@ struct ProjectSnoozeStoreTests {
         let project = try TestStore.project(in: store)
         store.snoozeCleanup(forProject: project.id, now: now)
 
+        #expect(store.save())
         let reloaded = ProjectStore(storeURL: scratch.path("projects.json"))
 
         #expect(reloaded.project(project.id)?.snoozedUntil == now.addingTimeInterval(86_400))

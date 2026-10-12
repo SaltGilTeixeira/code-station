@@ -1,10 +1,51 @@
 import Foundation
+import Network
 import Testing
 @testable import MenuBarApp
 
 // The parts of the OAuth flow that fail silently when they are wrong: the PKCE proof the
 // provider checks, and reading the code back out of the browser's redirect.
 struct OAuthTests {
+    @Test func tokenRequestsEscapeRawCredentialsAndCodes() throws {
+        let config = OAuthConfig(tokenURL: "https://example.com/token", clientID: "a+b/c=",
+                                 clientSecret: "secret%20 &+é", clientAuth: .body)
+        let request = try config.tokenRequest(fields: ["code": "a+b/c=", "grant_type": "authorization_code"])
+        let body = try #require(request.httpBody).map { $0 }
+        #expect(String(decoding: body, as: UTF8.self) ==
+                "client_id=a%2Bb%2Fc%3D&client_secret=secret%2520%20%26%2B%C3%A9&code=a%2Bb%2Fc%3D&grant_type=authorization_code")
+    }
+
+    @Test func basicClientAuthenticationEscapesEachCredentialBeforeJoiningThem() throws {
+        let config = OAuthConfig(tokenURL: "https://example.com/token", clientID: "a+b",
+                                 clientSecret: "secret:+", clientAuth: .basicHeader)
+        let request = try config.tokenRequest(fields: ["grant_type": "client_credentials"])
+        let credentials = Data("a%2Bb:secret%3A%2B".utf8).base64EncodedString()
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Basic \(credentials)")
+        #expect(String(decoding: try #require(request.httpBody), as: UTF8.self) == "grant_type=client_credentials")
+    }
+
+    @Test func waitsForTheCompleteCallbackHeader() async throws {
+        let port: UInt16 = 8917
+        let server = LoopbackServer()
+        try await server.start(port: port, timeout: 10)
+        defer { server.stop() }
+        let connection = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
+        connection.start(queue: DispatchQueue(label: "oauth.fragmented.test"))
+        defer { connection.cancel() }
+        for part in ["GET /callback?code=first", "%2Bsecond&state=xyz HTTP/1.1\r\n", "Host: localhost\r\n\r\n"] {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                connection.send(content: Data(part.utf8), completion: .contentProcessed { error in
+                    if let error { continuation.resume(throwing: error) }
+                    else { continuation.resume() }
+                })
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        let query = try await server.waitForRedirect()
+        #expect(query["code"] == "first+second")
+        #expect(query["state"] == "xyz")
+    }
+
 
     // The worked example from RFC 7636, so a broken hash or the wrong base64 alphabet
     // shows up here rather than as a rejected token call.

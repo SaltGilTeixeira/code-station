@@ -59,11 +59,11 @@ struct CopilotTests {
     // MARK: - Arguments
 
     @Test func copilotRunsPromptModeWithThePromptAsAnArgument() {
-        let arguments = SessionRunner.arguments(agent: .copilot,
+        let arguments = AgentLaunchConfiguration(agent: .copilot,
                                                 settings: SessionSettings(),
                                                 defaults: SessionSettings(),
                                                 newSessionID: "11111111-2222-4333-8444-555555555555",
-                                                prompt: "-dash first")
+                                                prompt: "-dash first").arguments
         #expect(arguments.starts(with: ["-p", "-dash first", "--output-format", "json"]))
         #expect(arguments.contains("--allow-all-tools"))
         #expect(!arguments.contains("--allow-all"))
@@ -78,12 +78,12 @@ struct CopilotTests {
     }
 
     @Test func aResumedCopilotTurnNamesItsSessionInsteadOfANewOne() {
-        let arguments = SessionRunner.arguments(agent: .copilot,
+        let arguments = AgentLaunchConfiguration(agent: .copilot,
                                                 settings: SessionSettings(),
                                                 defaults: SessionSettings(),
                                                 resume: "session-1",
                                                 newSessionID: "unused",
-                                                prompt: "carry on")
+                                                prompt: "carry on").arguments
         #expect(arguments.contains("--resume"))
         #expect(arguments.contains("session-1"))
         #expect(!arguments.contains("--session-id"))
@@ -92,21 +92,21 @@ struct CopilotTests {
 
     @Test func copilotFullAccessOpensEverything() {
         let settings = SessionSettings(copilotAccessMode: CopilotAccessMode.fullAccess.rawValue)
-        let arguments = SessionRunner.arguments(agent: .copilot,
+        let arguments = AgentLaunchConfiguration(agent: .copilot,
                                                 settings: settings,
                                                 defaults: SessionSettings(),
-                                                prompt: "go")
+                                                prompt: "go").arguments
         #expect(arguments.contains("--allow-all"))
         #expect(!arguments.contains("--allow-all-tools"))
     }
 
     @Test func copilotGuidanceRidesInThePrompt() {
-        let arguments = SessionRunner.arguments(agent: .copilot,
+        let arguments = AgentLaunchConfiguration(agent: .copilot,
                                                 settings: SessionSettings(),
                                                 defaults: SessionSettings(),
                                                 addDirectories: ["/tmp/shots"],
                                                 prompt: "draw it",
-                                                additionalSystemPrompt: "Write the design to canvas.html.")
+                                                additionalSystemPrompt: "Write the design to canvas.html.").arguments
         #expect(arguments[1] == "Write the design to canvas.html.\n\ndraw it")
         #expect(!arguments.contains("--append-system-prompt"))
         #expect(arguments.contains("--add-dir"))
@@ -119,10 +119,10 @@ struct CopilotTests {
                                        disabledMCPServers: [
                                            DisabledMCPServer(name: "grafana", transport: .stdio),
                                        ])
-        let arguments = SessionRunner.arguments(agent: .copilot,
+        let arguments = AgentLaunchConfiguration(agent: .copilot,
                                                 settings: settings,
                                                 defaults: SessionSettings(),
-                                                prompt: "go")
+                                                prompt: "go").arguments
         #expect(arguments.contains("--model"))
         #expect(arguments.contains("claude-opus-5"))
         #expect(arguments.contains("--effort"))

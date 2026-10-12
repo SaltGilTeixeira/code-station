@@ -13,16 +13,16 @@ struct SessionDraftTests {
         let first = UUID()
         let second = UUID()
 
-        runner.editDraft(first) { $0.text = "rename the button" }
-        runner.editDraft(second) { $0.text = "add a test" }
+        runner.composer.editDraft(first) { $0.text = "rename the button" }
+        runner.composer.editDraft(second) { $0.text = "add a test" }
 
-        #expect(runner.draft(first).text == "rename the button")
-        #expect(runner.draft(second).text == "add a test")
+        #expect(runner.composer.draft(first).text == "rename the button")
+        #expect(runner.composer.draft(second).text == "add a test")
     }
 
     @Test func unknownSessionStartsEmpty() {
         let runner = SessionRunner()
-        #expect(runner.draft(UUID()).isEmpty)
+        #expect(runner.composer.draft(UUID()).isEmpty)
     }
 
     @Test func keepsAttachmentsAlongsideTheText() throws {
@@ -30,12 +30,12 @@ struct SessionDraftTests {
         let sessionID = UUID()
         let file = Attachment(url: URL(fileURLWithPath: "/tmp/shot.png"))
 
-        runner.editDraft(sessionID) {
+        runner.composer.editDraft(sessionID) {
             $0.text = "look at this"
             $0.attachments = [file]
         }
 
-        #expect(runner.draft(sessionID).attachments == [file])
+        #expect(runner.composer.draft(sessionID).attachments == [file])
     }
 
     // Whitespace alone is nothing to come back to, so it should not count as a draft.
@@ -43,18 +43,18 @@ struct SessionDraftTests {
         let runner = SessionRunner()
         let sessionID = UUID()
 
-        runner.editDraft(sessionID) { $0.text = "   \n " }
+        runner.composer.editDraft(sessionID) { $0.text = "   \n " }
 
-        #expect(runner.draft(sessionID).isEmpty)
+        #expect(runner.composer.draft(sessionID).isEmpty)
     }
 
     @Test func clearingLeavesNothingBehind() {
         let runner = SessionRunner()
         let sessionID = UUID()
 
-        runner.editDraft(sessionID) { $0.text = "ship it" }
-        runner.clearDraft(sessionID)
+        runner.composer.editDraft(sessionID) { $0.text = "ship it" }
+        runner.composer.clearDraft(sessionID)
 
-        #expect(runner.draft(sessionID).isEmpty)
+        #expect(runner.composer.draft(sessionID).isEmpty)
     }
 }

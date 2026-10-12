@@ -25,7 +25,7 @@ struct PromptHistoryTests {
         }
     }
 
-    private var draft: String { runner.draft(session.id).text }
+    private var draft: String { runner.composer.draft(session.id).text }
 
     private func pressUp() -> Bool { runner.recallEarlier(session.id, store: store) }
     private func pressDown() -> Bool { runner.recallLater(session.id, store: store) }
@@ -114,7 +114,7 @@ struct PromptHistoryTests {
 
     @Test func upIgnoresABoxWithSomethingInIt() {
         sent("First")
-        runner.editDraft(session.id) { $0.text = "Half a thought" }
+        runner.composer.editDraft(session.id) { $0.text = "Half a thought" }
 
         #expect(!pressUp())
         #expect(draft == "Half a thought")
@@ -124,7 +124,7 @@ struct PromptHistoryTests {
     // same way written words do.
     @Test func upIgnoresABoxHoldingOnlyAttachments() {
         sent("First")
-        runner.editDraft(session.id) {
+        runner.composer.editDraft(session.id) {
             $0.attachments = [Attachment(url: URL(fileURLWithPath: "/tmp/notes.md"))]
         }
 
@@ -139,7 +139,7 @@ struct PromptHistoryTests {
 
         #expect(pressUp())
         #expect(draft == "Second")
-        runner.editDraft(session.id) { $0.text = "Second, but better" }
+        runner.composer.editDraft(session.id) { $0.text = "Second, but better" }
 
         #expect(!pressUp())
         #expect(!pressDown())
@@ -155,7 +155,7 @@ struct PromptHistoryTests {
         #expect(pressUp())
         #expect(draft == "First")
 
-        runner.clearDraft(session.id)
+        runner.composer.clearDraft(session.id)
         sent("Third")
 
         #expect(pressUp())
@@ -172,7 +172,7 @@ struct PromptHistoryTests {
         #expect(pressUp())
         #expect(draft == "Second")
         #expect(runner.recallEarlier(other.id, store: store))
-        #expect(runner.draft(other.id).text == "Elsewhere")
+        #expect(runner.composer.draft(other.id).text == "Elsewhere")
         #expect(draft == "Second")
     }
 }

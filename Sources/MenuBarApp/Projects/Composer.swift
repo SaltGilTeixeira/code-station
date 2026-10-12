@@ -41,10 +41,10 @@ struct Composer<Above: View, Accessory: View>: View {
     // word changes rather than coming back on the next keystroke.
     @State private var dismissedQuery: String?
 
-    private var attachments: [Attachment] { runner.draft(sessionID).attachments }
+    private var attachments: [Attachment] { runner.composer.draft(sessionID).attachments }
 
     // The slash command being typed, if the whole of the prompt is one.
-    private var query: String? { SlashQuery.typed(in: runner.draft(sessionID).text) }
+    private var query: String? { SlashQuery.typed(in: runner.composer.draft(sessionID).text) }
 
     private var matches: [AgentCommand] {
         guard let query, query != dismissedQuery else { return [] }
@@ -52,14 +52,14 @@ struct Composer<Above: View, Accessory: View>: View {
     }
 
     private var draft: Binding<String> {
-        Binding(get: { runner.draft(sessionID).text },
-                set: { text in runner.editDraft(sessionID) { $0.text = text } })
+        Binding(get: { runner.composer.draft(sessionID).text },
+                set: { text in runner.composer.editDraft(sessionID) { $0.text = text } })
     }
 
     var body: some View {
         let state = runner.state(sessionID)
         let busy = state.isBusy
-        let canSend = !blocked && !runner.draft(sessionID).isEmpty
+        let canSend = !blocked && !runner.composer.draft(sessionID).isEmpty
         let roots = store.session(sessionID).map(store.workingDirectories(for:)) ?? []
 
         let matches = matches
@@ -222,7 +222,7 @@ struct Composer<Above: View, Accessory: View>: View {
                 HStack(spacing: 6) {
                     ForEach(attachments) { attachment in
                         AttachmentChip(url: attachment.url) {
-                            runner.editDraft(sessionID) { $0.attachments.removeAll { $0.id == attachment.id } }
+                            runner.composer.editDraft(sessionID) { $0.attachments.removeAll { $0.id == attachment.id } }
                         }
                     }
                 }
@@ -254,18 +254,18 @@ struct Composer<Above: View, Accessory: View>: View {
     // The name goes in whole, with a space after it, so anything the command takes can be
     // typed straight on the end. The space also closes the menu, since the word is settled.
     private func take(_ command: AgentCommand) {
-        runner.editDraft(sessionID) { $0.text = command.typed + " " }
+        runner.composer.editDraft(sessionID) { $0.text = command.typed + " " }
         commandSelection = 0
         isFocused = true
     }
 
     private func attach(_ found: [Attachment]) {
-        runner.attach(found, to: sessionID)
+        runner.composer.attach(found, to: sessionID)
         isFocused = true
     }
 
     private func send() {
-        let draft = runner.draft(sessionID)
+        let draft = runner.composer.draft(sessionID)
         guard !blocked, !draft.isEmpty else { return }
         onSend?()
         runner.send(draft.text.trimmed,
@@ -273,7 +273,7 @@ struct Composer<Above: View, Accessory: View>: View {
                     customInstructions: draft.customInstructions,
                     sessionID: sessionID,
                     store: store)
-        runner.clearDraft(sessionID)
+        runner.composer.clearDraft(sessionID)
     }
 }
 
@@ -364,17 +364,5 @@ final class TurnRingView: LoopLayerView {
         turn.toValue = CGFloat.pi * 2
         turn.duration = Self.lap
         turner.add(LayerLoop.repeating(turn, period: Self.lap), forKey: "turn")
-    }
-}
-
-extension SessionRunner {
-    // Files joining the unsent prompt. The same file twice in one prompt says nothing
-    // new, so one already waiting is skipped.
-    func attach(_ found: [Attachment], to sessionID: UUID) {
-        editDraft(sessionID) { draft in
-            for item in found where !draft.attachments.contains(where: { $0.url == item.url }) {
-                draft.attachments.append(item)
-            }
-        }
     }
 }

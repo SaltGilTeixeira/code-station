@@ -22,7 +22,7 @@ struct SidebarDestinationTests {
         store.selectSession(session.id)
         #expect(store.sidebarDestination == SidebarDestination(containerID: first.id,
                                                                sessionID: session.id))
-        #expect(store.sessionToReveal == session.id)
+        #expect(store.navigation.sessionToReveal == session.id)
 
         store.selectHome()
         #expect(store.sidebarDestination == nil)
@@ -54,18 +54,18 @@ struct SidebarDestinationTests {
 
         #expect(store.sidebarDestination == SidebarDestination(containerID: project.id,
                                                                sessionID: session.id))
-        #expect(store.sessionToReveal == session.id)
+        #expect(store.navigation.sessionToReveal == session.id)
     }
 
     @Test func openingTheSameSessionAgainRequestsAnotherReveal() throws {
         let project = try TestStore.project(in: store)
         let session = store.newSession(in: project.id)
         store.selectSession(session.id)
-        store.sessionToReveal = nil
+        store.navigation.sessionToReveal = nil
 
         store.selectSession(session.id)
 
-        #expect(store.sessionToReveal == session.id)
+        #expect(store.navigation.sessionToReveal == session.id)
     }
 
     @Test func transcriptUpdatesDoNotRequestNavigationOrChangeTheDestination() throws {
@@ -73,12 +73,12 @@ struct SidebarDestinationTests {
         let session = store.newSession(in: project.id)
         store.selectSession(session.id)
         let destination = store.sidebarDestination
-        store.sessionToReveal = nil
+        store.navigation.sessionToReveal = nil
 
         store.append(ChatMessage(role: .assistant, text: "A streamed answer"), to: session.id)
         store.renameSession(session.id, to: "Updated title")
 
         #expect(store.sidebarDestination == destination)
-        #expect(store.sessionToReveal == nil)
+        #expect(store.navigation.sessionToReveal == nil)
     }
 }

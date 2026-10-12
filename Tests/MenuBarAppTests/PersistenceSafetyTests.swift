@@ -365,6 +365,33 @@ struct PersistenceSafetyTests {
         #expect(store.config(for: shared).clientID == "shared-client")
     }
 
+    @Test func metadataEditsSavePendingTranscriptsOffTheMainThread() async throws {
+        let index = scratch.path("projects.json")
+        let original = ProjectStore(storeURL: index)
+        let project = try #require(original.addProject(at: scratch.path("project")))
+        let session = original.newSession(in: project.id)
+        #expect(original.save())
+
+        var files = PersistentFileClient.live
+        files.write = { data, url in
+            #expect(!Thread.isMainThread)
+            try PersistentFile.write(data, to: url)
+        }
+        let store = ProjectStore(storeURL: index, files: files)
+        store.append(ChatMessage(role: .assistant, text: "Pending reply"), to: session.id)
+        store.renameProject(project.id, to: "Renamed")
+        store.setPinned(true, forSession: session.id)
+
+        #expect(await waitUntil {
+            guard let data = try? Data(contentsOf: index),
+                  let saved = try? PersistentFile.makeDecoder().decode(ProjectPersistence.Index.self, from: data)
+            else { return false }
+            return saved.projects.first?.name == "Renamed" && saved.sessions.first?.isPinned == true
+        })
+        let restored = ProjectStore(storeURL: index)
+        #expect(restored.transcript(of: session.id).last?.text == "Pending reply")
+    }
+
     @Test func queuedWriteCannotRecreateADeletedTranscript() async throws {
         let store = ProjectStore(storeURL: scratch.path("projects.json"))
         let project = try #require(store.addProject(at: scratch.path("project")))

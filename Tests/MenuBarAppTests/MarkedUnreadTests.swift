@@ -61,6 +61,7 @@ struct MarkedUnreadTests {
 
         Preferences.selectedSessionID = marked.id
         defer { Preferences.selectedSessionID = nil }
+        #expect(store.save())
         let reloaded = ProjectStore(storeURL: store.storeURL)
 
         #expect(reloaded.isUnread(marked.id))

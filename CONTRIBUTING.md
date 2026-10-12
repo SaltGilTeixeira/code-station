@@ -33,14 +33,16 @@ open "build/Teya Code Station.app"
 Run the full test suite after changing code:
 
 ```bash
-swift test --disable-sandbox
+swift test --build-system native --disable-sandbox --no-parallel
 ```
 
 Run a focused test while iterating:
 
 ```bash
-swift test --disable-sandbox --filter GitActionsTests
+swift test --build-system native --disable-sandbox --no-parallel --filter GitActionsTests
 ```
+
+Run the suite serially because the AppKit, WebKit, process, and preference fixtures share host resources. The native build system avoids requiring the separate Metal shader toolchain.
 
 Tests live in `Tests/MenuBarAppTests`. They cover session and transcript behavior, CLI stream parsing, Git and worktree operations, terminal and PTY integration, file browsing, Dispatch and OAuth flows, skills, settings, persistence, and UI-facing presentation logic.
 
@@ -80,7 +82,9 @@ Keep organisation-specific hostnames, client IDs, and repository URLs in that fi
 
 A project is a reference to a folder on disk. A workspace is a reusable group of projects with one lead project. When a session starts, it records its own project paths and worktree choices so later workspace edits do not change an existing conversation.
 
-`SessionRunner` launches the selected agent in its own process group. Claude uses its streaming CLI protocol, Codex uses `app-server` JSON-RPC, and Copilot uses its headless server with Content-Length framing. The adapters normalize these protocols into shared `StreamEvent` values for the transcript and session state.
+`SessionRunner` owns agent connections, turn execution, and the prompt queue. `SessionComposerStore` keeps unsent drafts and prompt-history cursors. `AgentLaunchConfiguration` resolves settings once and supplies both command-line arguments and server parameters, so prompt text cannot be interpreted as an access setting. `AgentInstructions` holds the app guidance sent to agents.
+
+The runner launches the selected agent in its own process group. Claude uses its streaming CLI protocol, Codex uses `app-server` JSON-RPC, and Copilot uses its headless server with Content-Length framing. The adapters normalize these protocols into shared `StreamEvent` values for the transcript and session state.
 
 A server stays open while the agent has background work. Task lists are refreshed every five seconds while waiting, and Copilot also reports task changes. Follow-up messages use that same conversation. Ending the wait asks the agent to cancel its tasks before closing the process and cleaning up its process groups. The selected model, workspace roots, access limits, and disabled MCP servers carry into the server session. See [the persistent agent sessions decision](adr/0001-persistent-agent-sessions.md).
 
@@ -89,6 +93,8 @@ Git worktree sessions use a checkout and branch owned by that session. Workspace
 The terminal uses a real pseudo-terminal through SwiftTerm. Each tab owns its shell process and remains alive while the drawer is closed.
 
 ## Persistence and local processes
+
+`ProjectStore` owns projects, sessions, and transcript lifetime. `ProjectNavigation` keeps selection, history, and sidebar reveal state. `ProjectPersistence` serializes transcript reads, writes, and removals so a queued write cannot recreate a deleted conversation. Ordinary metadata edits and streamed replies save in the background. Operations that require confirmed durability wait for a save and retain their rollback behavior.
 
 App-owned data lives under:
 
@@ -120,7 +126,7 @@ Prefer existing controls and patterns before adding another variation. Comments 
 ## Before submitting a change
 
 1. Build the package with `swift build --build-system native --disable-sandbox`.
-2. Run `swift test --disable-sandbox`.
+2. Run `swift test --build-system native --disable-sandbox --no-parallel`.
 3. For UI changes, build the app bundle and check the affected flow in the running app.
 4. Review the diff for unrelated generated files or local configuration.
 

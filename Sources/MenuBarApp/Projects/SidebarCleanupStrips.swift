@@ -109,7 +109,7 @@ struct OldSessionsStrip: View {
     // The strip makes one statement at a time. Once a cohort is waiting the top line is a
     // promise about that cohort and nothing else, so it counts the sessions the sweep has
     // already settled on rather than everything that has gone quiet.
-    static func title(_ summary: OldSessionsWatch.Summary, deleting: Int?, days: Int) -> String {
+    nonisolated static func title(_ summary: OldSessionsWatch.Summary, deleting: Int?, days: Int) -> String {
         guard let deleting else {
             return "\(counted(summary.sessions, "session")) older than \(counted(days, "day"))"
         }
@@ -122,7 +122,7 @@ struct OldSessionsStrip: View {
     // saved work stays only while that work is there. So the line says they are outside
     // this round, not that they are kept. With no cohort waiting the strip is only an
     // offer to review, so the detail counts what accepting it would cost.
-    static func detail(_ summary: OldSessionsWatch.Summary, deleting: Int?, days: Int) -> String {
+    nonisolated static func detail(_ summary: OldSessionsWatch.Summary, deleting: Int?, days: Int) -> String {
         guard let deleting else { return reviewDetail(summary) }
         var parts = ["Older than \(counted(days, "day"))"]
         // The summary is refreshed on its own slower clock, so it can lag a cohort that
@@ -138,7 +138,7 @@ struct OldSessionsStrip: View {
 
     // "1 project snoozed · 1 would lose work", so a quiet strip is never a mystery.
     // With nothing snoozed the line says only what it has always said.
-    private static func reviewDetail(_ summary: OldSessionsWatch.Summary) -> String {
+    private nonisolated static func reviewDetail(_ summary: OldSessionsWatch.Summary) -> String {
         let work = summary.losesWork == 1
             ? "1 session would lose work"
             : "\(summary.losesWork) sessions would lose work"

@@ -23,6 +23,7 @@ struct PinningTests {
         store.setPinned(true, forSession: session.id)
 
         #expect(store.sidebarSession(session.id)?.isPinned == true)
+        #expect(store.save())
         let loaded = ProjectStore(storeURL: store.storeURL)
         #expect(loaded.project(first.id)?.isPinned == true)
         #expect(loaded.workspace(workspace.id)?.isPinned == true)

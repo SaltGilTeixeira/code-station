@@ -195,8 +195,8 @@ struct AgentSessionConnectionTests {
 
     @Test(arguments: [false, true])
     func copilotPreservesAccessBoundaries(fullAccess: Bool) throws {
-        let wire = try Wire(.copilot, arguments: [fullAccess ? "--allow-all" : "--allow-all-tools",
-                                                "--add-dir", "/tmp/attached"])
+        let wire = try Wire(.copilot, settings: SessionSettings(copilotAccessMode: fullAccess ? "full-access" : "workspace"),
+                            directories: ["/tmp/attached"], prompt: "--allow-all")
         #expect(wire.connection.start("hello"))
         _ = try wire.respond(wire.lastRequest(), ["sessionId": "session"])
         let request = try wire.lastRequest()
@@ -210,18 +210,19 @@ struct AgentSessionConnectionTests {
     }
 
     @Test func codexPreservesSandboxAndAutoReviewSettings() throws {
-        let launch = try AgentServerLaunch(agent: .codex, arguments: [
-            "exec", "-c", "sandbox_mode=\"workspace-write\"", "--approve-for-me",
-            "-c", "sandbox_workspace_write.writable_roots=[\"/tmp/attached\"]",
-            "--model", "chosen-model", "-c", "model_reasoning_effort=\"high\"", "-"
-        ], directory: "/tmp/project", resumeID: "existing")
+        let configuration = AgentLaunchConfiguration(
+            agent: .codex,
+            settings: SessionSettings(model: "gpt-5.6-terra", effort: "high", codexSandboxMode: "approve-for-me"),
+            defaults: SessionSettings(), addDirectories: ["/tmp/attached"],
+            writableRoots: ["/tmp/attached"], resume: "existing")
+        let launch = try AgentServerLaunch(configuration: configuration, directory: "/tmp/project")
         #expect(launch.arguments.first == "app-server")
         #expect(launch.arguments.contains("sandbox_mode=\"workspace-write\""))
         #expect(launch.arguments.contains("approvals_reviewer=\"auto_review\""))
         #expect(launch.arguments.contains("sandbox_workspace_write.writable_roots=[\"/tmp/attached\"]"))
         let params = try #require(JSONSerialization.jsonObject(with: launch.sessionParameters) as? [String: Any])
         #expect(params["threadId"] as? String == "existing")
-        #expect(params["model"] as? String == "chosen-model")
+        #expect(params["model"] as? String == "gpt-5.6-terra")
         #expect(params["approvalPolicy"] == nil)
     }
 }
@@ -232,11 +233,14 @@ private final class Wire {
     let connection: AgentSessionConnection
     var taskField: String { agent == .codex ? "data" : "tasks" }
 
-    init(_ agent: AgentKind, arguments: [String] = []) throws {
+    init(_ agent: AgentKind, settings: SessionSettings = SessionSettings(),
+         directories: [String] = [], prompt: String? = nil) throws {
         self.agent = agent
         let output = self.output
         connection = AgentSessionConnection(launch: try AgentServerLaunch(
-            agent: agent, arguments: arguments, directory: "/tmp/project", resumeID: nil)) {
+            configuration: AgentLaunchConfiguration(agent: agent, settings: settings, defaults: SessionSettings(),
+                                                    addDirectories: directories, prompt: prompt),
+            directory: "/tmp/project")) {
                 output.append($0)
                 return true
             }

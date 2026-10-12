@@ -536,31 +536,7 @@ final class DispatchAuthStore {
 
     private func exchange(_ fields: [String: String], config: OAuthConfig,
                           keepingRefresh: String?) async throws -> OAuthToken {
-        guard let url = URL(string: config.tokenURL) else {
-            throw OAuthError("The access token URL is not valid.")
-        }
-
-        var fields = fields
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-
-        switch config.clientAuth {
-        case .body:
-            fields["client_id"] = config.clientID
-            if !config.clientSecret.isEmpty { fields["client_secret"] = config.clientSecret }
-        case .basicHeader:
-            let pair = "\(config.clientID):\(config.clientSecret)"
-            request.setValue("Basic \(Data(pair.utf8).base64EncodedString())",
-                             forHTTPHeaderField: "Authorization")
-            // Providers that read the header still expect the id in the body for PKCE.
-            if fields["grant_type"] == "authorization_code" { fields["client_id"] = config.clientID }
-        }
-
-        var body = URLComponents()
-        body.queryItems = fields.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
-        request.httpBody = Data((body.percentEncodedQuery ?? "").utf8)
+        let request = try config.tokenRequest(fields: fields)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let parsed = try? JSONDecoder.oauth.decode(TokenResponse.self, from: data)

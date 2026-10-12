@@ -581,7 +581,7 @@ enum GitInspector {
         for source in sources {
             // --no-ext-diff and --no-textconv keep a repo's own diff drivers from running:
             // we only ever want git's own output here.
-            let arguments = ["--no-pager"] + source.arguments
+            let arguments = ["--no-pager", "--literal-pathspecs"] + source.arguments
                 + ["--no-color", "--no-ext-diff", "--no-textconv", "-M", "--"] + pathspec
             let output = run(tool, arguments, in: rootURL)
             guard output.ok else {

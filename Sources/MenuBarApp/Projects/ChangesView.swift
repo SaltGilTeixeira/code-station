@@ -97,6 +97,13 @@ final class ChangesNavigationMemory {
     var commits: [String: [GitCommitSummary]] = [:]
     var collapsedHistories: Set<String> = []
     var historyFilter = ""
+
+    func history(for root: String) -> CommitHistorySelection {
+        if let selection = histories[root] { return selection }
+        let selection = CommitHistorySelection()
+        histories[root] = selection
+        return selection
+    }
 }
 
 struct ChangesRepository: Identifiable {
@@ -120,41 +127,25 @@ struct ChangesView: View {
     let initiallySelectedPath: String?
     let repositories: [ChangesRepository]
     let requestedPath: String?
-    let navigation: ChangesNavigationMemory?
+    @State private var navigation: ChangesNavigationMemory
+    private let isWorkspace: Bool
     let selectRepository: (String, String?) -> Void
-    @State private var localCollapsedRepositories: Set<String> = []
+
     private var collapsedRepositories: Set<String> {
-        get { navigation?.collapsed ?? localCollapsedRepositories }
-        nonmutating set {
-            if let navigation { navigation.collapsed = newValue }
-            else { localCollapsedRepositories = newValue }
-        }
+        get { navigation.collapsed }
+        nonmutating set { navigation.collapsed = newValue }
     }
-    @State private var localCollapsedHistories: Set<String> = []
-    // The history folds its projects apart from the changes, so closing a project's
-    // commits leaves its changed files open and the other way round.
     private var collapsedHistories: Set<String> {
-        get { navigation?.collapsedHistories ?? localCollapsedHistories }
-        nonmutating set {
-            if let navigation { navigation.collapsedHistories = newValue }
-            else { localCollapsedHistories = newValue }
-        }
+        get { navigation.collapsedHistories }
+        nonmutating set { navigation.collapsedHistories = newValue }
     }
-    @State private var localHistoryFilter = ""
     private var historyFilter: String {
-        get { navigation?.historyFilter ?? localHistoryFilter }
-        nonmutating set {
-            if let navigation { navigation.historyFilter = newValue }
-            else { localHistoryFilter = newValue }
-        }
+        get { navigation.historyFilter }
+        nonmutating set { navigation.historyFilter = newValue }
     }
-    @State private var localTreeWidth = ExplorerSplitLayout.defaultTreeWidth
     private var treeWidth: CGFloat {
-        get { navigation?.treeWidth ?? localTreeWidth }
-        nonmutating set {
-            if let navigation { navigation.treeWidth = newValue }
-            else { localTreeWidth = newValue }
-        }
+        get { navigation.treeWidth }
+        nonmutating set { navigation.treeWidth = newValue }
     }
     // The navigator keeps its own cursor instead of focusing each row, since a plain
     // button only takes keyboard focus when Full Keyboard Access is on.
@@ -180,13 +171,9 @@ struct ChangesView: View {
     @State private var snapshot: GitSnapshot?
     @State private var loading = false
     @State private var working: String?
-    @State private var localMode: Mode = .changes
     private var mode: Mode {
-        get { navigation.map { $0.showingHistory ? .history : .changes } ?? localMode }
-        nonmutating set {
-            if let navigation { navigation.showingHistory = newValue == .history }
-            else { localMode = newValue }
-        }
+        get { navigation.showingHistory ? .history : .changes }
+        nonmutating set { navigation.showingHistory = newValue == .history }
     }
     @State private var committing = false
     @State private var commitMessage = ""
@@ -197,11 +184,14 @@ struct ChangesView: View {
     @State private var excluded: Set<GitChange.ID> = []
     @State private var amend = false
     @State private var messageBeforeAmend = ""
-    @State private var fileSelection = ChangeFileSelection()
+    private var fileSelection: ChangeFileSelection {
+        get { navigation.selections[root] ?? ChangeFileSelection() }
+        nonmutating set { navigation.selections[root] = newValue }
+    }
     @State private var commits: [GitCommitSummary]?
     @State private var historyNote: String?
     @State private var loadingHistory = false
-    @State private var historySelection = CommitHistorySelection()
+    private var historySelection: CommitHistorySelection { navigation.history(for: root) }
     @State private var diff: FileDiff?
     @State private var diffText: NSAttributedString?
     @State private var loadingDiff = false
@@ -228,9 +218,10 @@ struct ChangesView: View {
          repositories: [ChangesRepository] = [], requestedPath: String? = nil,
          navigation: ChangesNavigationMemory? = nil,
          selectRepository: @escaping (String, String?) -> Void = { _, _ in }) {
-        self.navigation = navigation
-        _historySelection = State(initialValue: navigation?.histories[root] ?? CommitHistorySelection())
-        _fileSelection = State(initialValue: navigation?.selections[root] ?? ChangeFileSelection())
+        let memory = navigation ?? ChangesNavigationMemory()
+        _ = memory.history(for: root)
+        _navigation = State(initialValue: memory)
+        isWorkspace = navigation != nil
         _appliedInitialSelection = State(initialValue: navigation?.selections[root] != nil
             && initiallySelectedPath == nil && requestedPath == nil)
         self.root = root
@@ -252,25 +243,25 @@ struct ChangesView: View {
                 // commit page take turns.
                 let narrowHistory = mode == .history && geometry.size.width < 850
                 let navigatorVisible = showsNavigator(width: geometry.size.width) && !narrowHistory
-                let width = navigation == nil ? 280
+                let width = !isWorkspace ? 280
                     : ExplorerSplitLayout.treeWidth(treeWidth, availableWidth: geometry.size.width)
                 let headerWidth = navigatorVisible
                     ? geometry.size.width - width - ExplorerSplitLayout.dividerWidth : geometry.size.width
                 VStack(spacing: 0) {
-                    if navigation == nil {
+                    if !isWorkspace {
                         header(compact: geometry.size.width < 700, namesProject: !navigatorVisible)
                         if committing && mode == .changes { commitBar }
                     }
                     HStack(spacing: 0) {
                         if navigatorVisible {
                             VStack(spacing: 0) {
-                                if navigation != nil { workspaceBand }
+                                if isWorkspace { workspaceBand }
                                 workspaceNavigator
                             }.frame(width: width).clipped()
                             Rectangle().fill(Theme.hairline).frame(width: ExplorerSplitLayout.dividerWidth)
                         }
                         VStack(spacing: 0) {
-                            if navigation != nil {
+                            if isWorkspace {
                                 header(compact: headerWidth < 600, namesProject: false)
                                 if committing && mode == .changes { commitBar }
                             }
@@ -278,7 +269,7 @@ struct ChangesView: View {
                         }.frame(maxWidth: .infinity).clipped()
                     }
                     .overlay(alignment: .leading) {
-                        if navigatorVisible && navigation != nil {
+                        if navigatorVisible && isWorkspace {
                             WorkspaceSplitHandle(width: Binding(get: { treeWidth }, set: { treeWidth = $0 }), displayedWidth: width,
                                                  availableWidth: geometry.size.width)
                                 .offset(x: width + (ExplorerSplitLayout.dividerWidth - ExplorerSplitLayout.handleWidth) / 2)
@@ -300,8 +291,6 @@ struct ChangesView: View {
             }
         }
         .background(Theme.background)
-        .onAppear { navigation?.histories[root] = historySelection }
-        .onChange(of: fileSelection) { _, selection in navigation?.selections[root] = selection }
         // The screen opens on the last snapshot taken of this tree while a fresh one
         // is fetched, so the file list is there at first glance instead of after git.
         .task(id: root) {
@@ -419,7 +408,7 @@ struct ChangesView: View {
     // A session's navigator is always there, and so is the history's, since the commits
     // live in it. A single project's changes only show the navigator where it fits.
     private func showsNavigator(width: CGFloat) -> Bool {
-        navigation != nil || mode == .history || width >= 650 || committing
+        isWorkspace || mode == .history || width >= 650 || committing
     }
 
     private var workspaceBand: some View {
@@ -717,7 +706,7 @@ struct ChangesView: View {
     }
 
     private func projectCommits(_ repositoryRoot: String) -> [GitCommitSummary]? {
-        repositoryRoot == root ? commits : navigation?.commits[repositoryRoot]
+        repositoryRoot == root ? commits : navigation.commits[repositoryRoot]
     }
 
     private func shownCommits(_ repositoryRoot: String) -> [GitCommitSummary] {
@@ -822,9 +811,8 @@ struct ChangesView: View {
         if repositoryRoot == root {
             historySelection.select(commit)
         } else {
-            let selection = navigation?.histories[repositoryRoot] ?? CommitHistorySelection()
+            let selection = navigation.history(for: repositoryRoot)
             selection.select(commit)
-            navigation?.histories[repositoryRoot] = selection
             selectRepository(repositoryRoot, nil)
         }
         announce(commit.subject)
@@ -1170,8 +1158,8 @@ struct ChangesView: View {
                         .appMenu {
                             var entries: [MenuEntry] = []
                             if !file.isBinary && diff?.images == nil {
-                                entries = ["Unified diff", "Side by side"].map { layout in
-                                    .item(layout, checked: appSettings.changesDiffLayout == layout) {
+                                entries = DiffLayout.allCases.map { layout in
+                                    .item(layout.title, checked: appSettings.changesDiffLayout == layout) {
                                         appSettings.changesDiffLayout = layout
                                     }
                                 }
@@ -1198,7 +1186,7 @@ struct ChangesView: View {
             .padding(.vertical, 10)
 
             if mode == .changes, let file = selected, !file.isBinary, diff?.images == nil {
-                if appSettings.changesDiffLayout == "Side by side" {
+                if appSettings.changesDiffLayout == .sideBySide {
                     HStack {
                         versionHeader("Last commit", version: .before, file: file)
                         versionHeader("Working tree", version: .after, file: file)
@@ -1224,7 +1212,7 @@ struct ChangesView: View {
         } else if mode == .changes, diff?.lines.isEmpty == true, !loadingDiff {
             PaneMessage(icon: "doc", title: "No content changes",
                         detail: "This file may have metadata changes or changes confined to the index.")
-        } else if mode == .changes, appSettings.changesDiffLayout == "Side by side", let diff {
+        } else if mode == .changes, appSettings.changesDiffLayout == .sideBySide, let diff {
             SideBySideDiff(lines: diff.lines, expand: expand)
         } else if let diffText {
             DiffTextView(text: diffText, scroll: diffScroll) { gap, direction in
@@ -1577,7 +1565,7 @@ struct ChangesView: View {
             if mode == .history {
                 let history = await GitInspector.recentCommits(at: repository.root)
                 guard !Task.isCancelled else { return }
-                navigation?.commits[repository.root] = history.commits
+                navigation.commits[repository.root] = history.commits
             } else {
                 let fresh = await GitInspector.snapshot(at: repository.root, comparingToLastCommit: true)
                 guard !Task.isCancelled else { return }
@@ -1594,7 +1582,7 @@ struct ChangesView: View {
         guard !Task.isCancelled else { return }
         commits = history.commits
         historyNote = history.note
-        navigation?.commits[root] = history.commits
+        navigation.commits[root] = history.commits
         loadingHistory = false
 
         if let current = historySelection.commit,

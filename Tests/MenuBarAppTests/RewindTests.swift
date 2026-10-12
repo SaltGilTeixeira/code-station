@@ -63,7 +63,7 @@ struct RewindTests {
         #expect(transcript.last?.role == .system)
         #expect(transcript.contains { $0.id == second.id } == false)
         #expect(store.session(session.id)?.claudeSessionID == "claude-1")
-        #expect(runner.draft(session.id).text == "Now break it")
+        #expect(runner.composer.draft(session.id).text == "Now break it")
     }
 
     @Test func rewindingToTheFirstPromptStartsOver() {
@@ -73,7 +73,7 @@ struct RewindTests {
 
         // Nothing had been said before the first prompt, so there is nothing to resume.
         #expect(store.session(session.id)?.claudeSessionID == nil)
-        #expect(runner.draft(session.id).text == "Build the thing")
+        #expect(runner.composer.draft(session.id).text == "Build the thing")
     }
 
     // Codex reuses one thread for the whole conversation, so a Codex turn cannot be

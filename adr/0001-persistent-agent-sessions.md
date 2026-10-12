@@ -12,7 +12,7 @@ The waiting notice represents background work that the agent still owns. Code St
 
 Claude uses its streaming CLI protocol. Codex uses its local app server, and Copilot uses its headless server. Each run owns one process group and one conversation. The servers remain alive while background tasks are pending and close after the conversation becomes idle with no tasks left.
 
-`AgentServerLaunch` translates the resolved model, access settings, workspace roots, and MCP options into server settings. `AgentSessionConnection` handles framing, request IDs, initialization, messages, task lists, and cancellation. `SessionRunner` continues to own the transcript, queue, wait threshold, process lifetime, and process cleanup.
+`AgentLaunchConfiguration` resolves the model, access settings, workspace roots, and MCP options. Command-line arguments and `AgentServerLaunch` parameters are built from that value. Prompts remain data and never determine permissions. `AgentSessionConnection` handles framing, request IDs, initialization, messages, task lists, and cancellation. `SessionRunner` owns the queue, wait threshold, process lifetime, and process cleanup, and writes agent events into `ProjectStore`. `SessionComposerStore` owns unsent input and prompt-history navigation.
 
 Codex supplies background terminals and child-agent states. Copilot supplies its session task list. While waiting, task lists are refreshed every five seconds. A generation counter prevents a delayed task-list response from finishing a newer turn. Task updates do not reset the three-minute notice threshold.
 

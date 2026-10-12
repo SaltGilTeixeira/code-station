@@ -53,7 +53,7 @@ enum RemovedOwner: Hashable {
 // conversation itself is a file per session, read when the session is opened and dropped
 // when nothing needs it, so a hundred sessions cost what one of them does.
 //
-// The running Claude Code process itself is owned by SessionRunner.
+// Agent connections and processes are owned by SessionRunner.
 @MainActor
 @Observable
 final class ProjectStore {
@@ -72,58 +72,39 @@ final class ProjectStore {
     // exists: the store owns none of that and should not have to know it is there.
     @ObservationIgnored var onRemoved: ((RemovedOwner) -> Void)?
     private var sidebarSessionRevision = 0
+    let navigation = ProjectNavigation()
+
     var selection: SidebarSelection? {
-        // Opening a session is reading it, wherever the click came from, and it is also
-        // what brings the conversation into memory - and lets the last one go.
-        didSet {
-            guard selection != oldValue else { return }
-            if case .session(let id) = oldValue {
+        get { navigation.selection }
+        set {
+            let previous = navigation.selection
+            guard newValue != previous else { return }
+            navigation.selection = newValue
+            if case .session(let id) = previous {
                 markSessionSeen(id)
                 release(id, for: .open)
             }
-            if case .session(let id) = selection {
+            if case .session(let id) = newValue {
                 finished.remove(id)
                 if markedUnread.contains(id) { setMarkedUnread(false, for: id) }
                 hold(id, for: .open)
             }
         }
     }
-    var selectedProjectID: UUID?
 
-    // The trail of places visited, which Cmd+[ and Cmd+] walk.
-    private(set) var history = NavigationHistory()
-    // Held true while the trail is being walked, so applying a place is not filed as a
-    // fresh arrival. Without this, stepping back would record a new visit and there
-    // would be no way out of the last two places.
-    @ObservationIgnored private var isWalkingHistory = false
-    // The tab each session was last left on. The trail names sessions, not tabs, so
-    // walking back to one reopens it where the user was rather than on its conversation.
-    @ObservationIgnored private var lastSessionTabs: [UUID: SessionDestination] = [:]
+    var selectedProjectID: UUID? {
+        get { navigation.selectedProjectID }
+        set { navigation.selectedProjectID = newValue }
+    }
 
-    // Most session links open the conversation. A link whose purpose is reviewing the
-    // working tree carries that intent through navigation so the destination matches the
-    // words on the button.
-    private(set) var sessionOpenRequest: SessionOpenRequest?
-
-    // The rail consumes reveal requests so opening the same destination again can bring
-    // it back into view. Conversation updates never issue these requests.
-    var projectToReveal: UUID?
-    var sessionToReveal: UUID?
-
-    // The row the rail should point out once it is in view. Navigation that starts
-    // somewhere else leaves the eye on the click that caused it, so the rail has to say
-    // where it landed; a click on a row in the rail is already where the eye is.
-    var sidebarHighlight: UUID?
-
-    // The project or workspace row the pointer is resting on in the rail, so Home's map
-    // can light the same project.
-    var pointedSidebarItem: UUID?
+    var history: NavigationHistory { navigation.history }
+    var sessionOpenRequest: SessionOpenRequest? { navigation.sessionOpenRequest }
 
     func pointSidebarItem(_ id: UUID, _ hovering: Bool) {
         if hovering {
-            pointedSidebarItem = id
-        } else if pointedSidebarItem == id {
-            pointedSidebarItem = nil
+            navigation.pointedSidebarItem = id
+        } else if navigation.pointedSidebarItem == id {
+            navigation.pointedSidebarItem = nil
         }
     }
 
@@ -145,6 +126,7 @@ final class ProjectStore {
     let designsURL: URL
     let removalJournalURL: URL
     private let files: PersistentFileClient
+    private let persistence: ProjectPersistence
     private(set) var loadError: String?
     private(set) var saveError: String?
     private(set) var transcriptLoadErrors: [UUID: String] = [:]
@@ -169,17 +151,6 @@ final class ProjectStore {
     // bytes are on disk.
     private var evictWhenWritten: Set<UUID> = []
 
-    private struct Persisted: Codable, Sendable {
-        var projects: [Project]
-        var sessions: [ChatSession]
-        // Optional so an index written before workspaces existed still decodes.
-        var workspaces: [ProjectWorkspace]?
-        // Written by an earlier version, which kept what was open in this file. It is a
-        // preference now, so these are only read, to carry that choice over once.
-        var selectedSessionID: UUID?
-        var selectedProjectID: UUID?
-    }
-
     private struct RemovalJournal: Codable {
         var removals: [PendingSessionRemoval]
     }
@@ -191,6 +162,7 @@ final class ProjectStore {
                 .map { URL(fileURLWithPath: $0) }
             ?? AppPaths.supportFile("projects.json", movedFrom: AppPaths.legacy("projects.json"))
         self.files = files
+        persistence = ProjectPersistence(storeURL: self.storeURL, files: files)
         // Named after the index rather than fixed, so a store pointed somewhere else -
         // a test, a second copy of the app - takes its conversations with it.
         transcriptsURL = self.storeURL.deletingLastPathComponent()
@@ -373,7 +345,7 @@ final class ProjectStore {
     // Home takes the user back to the same working context instead of changing their place.
     func selectHome() {
         selection = .home
-        arrived()
+        navigation.arrived()
     }
 
     // Choosing a project is different from opening a conversation. Keeping the two
@@ -382,9 +354,9 @@ final class ProjectStore {
         guard project(id) != nil else { return }
         selectedProjectID = id
         selection = nil
-        if revealingInSidebar { projectToReveal = id }
-        sidebarHighlight = revealingInSidebar ? id : nil
-        arrived()
+        if revealingInSidebar { navigation.projectToReveal = id }
+        navigation.sidebarHighlight = revealingInSidebar ? id : nil
+        navigation.arrived()
     }
 
     func selectSession(_ id: UUID, destination: SessionDestination = .conversation,
@@ -397,32 +369,19 @@ final class ProjectStore {
             ? .design
             : destination
         selectedProjectID = session.projectID
-        sessionOpenRequest = SessionOpenRequest(sessionID: visibleID, destination: landing)
+        navigation.sessionOpenRequest = SessionOpenRequest(sessionID: visibleID, destination: landing)
         selection = .session(visibleID)
-        sessionToReveal = visibleID
-        sidebarHighlight = revealingInSidebar ? visibleID : nil
-        arrived()
+        navigation.sessionToReveal = visibleID
+        navigation.sidebarHighlight = revealingInSidebar ? visibleID : nil
+        navigation.arrived()
     }
 
     func selectWorkspace(_ id: UUID, revealingInSidebar: Bool = true) {
         guard workspace(id) != nil else { return }
         selection = .workspace(id)
-        if revealingInSidebar { projectToReveal = id }
-        sidebarHighlight = revealingInSidebar ? id : nil
-        arrived()
-    }
-
-    private func persistSelection() {
-        Preferences.selectedSessionID = if case .session(let id) = selection { id } else { nil }
-        Preferences.selectedWorkspaceID = if case .workspace(let id) = selection { id } else { nil }
-        Preferences.selectedProjectID = selectedProjectID
-    }
-
-    // Somewhere new is on screen. Writing the place down and filing it on the trail are
-    // the same moment, which is what separates arriving from the index being saved.
-    private func arrived() {
-        persistSelection()
-        recordVisit()
+        if revealingInSidebar { navigation.projectToReveal = id }
+        navigation.sidebarHighlight = revealingInSidebar ? id : nil
+        navigation.arrived()
     }
 
     // MARK: - Back and forward
@@ -432,44 +391,32 @@ final class ProjectStore {
 
     // Where the app is pointed right now. A project is chosen without opening anything,
     // so it is the one place that is read from `selectedProjectID` instead of `selection`.
-    var currentPlace: NavigationPlace? {
-        switch selection {
-        case .home: .home
-        case .session(let id): .session(id)
-        case .workspace(let id): .workspace(id)
-        case nil: selectedProjectID.map(NavigationPlace.project)
-        }
-    }
+    var currentPlace: NavigationPlace? { navigation.currentPlace }
 
     var canGoBack: Bool { history.canGoBack }
     var canGoForward: Bool { history.canGoForward }
 
     @discardableResult
     func goBack() -> Bool {
-        guard let place = history.goBack(reachable: stillExists) else { return false }
+        guard let place = navigation.history.goBack(reachable: stillExists) else { return false }
         open(place)
         return true
     }
 
     @discardableResult
     func goForward() -> Bool {
-        guard let place = history.goForward(reachable: stillExists) else { return false }
+        guard let place = navigation.history.goForward(reachable: stillExists) else { return false }
         open(place)
         return true
     }
 
     func noteSessionTab(_ destination: SessionDestination, for sessionID: UUID) {
-        lastSessionTabs[sessionID] = destination
-    }
-
-    private func recordVisit() {
-        guard !isWalkingHistory, let currentPlace else { return }
-        history.visit(currentPlace)
+        navigation.lastSessionTabs[sessionID] = destination
     }
 
     private func open(_ place: NavigationPlace) {
-        isWalkingHistory = true
-        defer { isWalkingHistory = false }
+        navigation.isWalkingHistory = true
+        defer { navigation.isWalkingHistory = false }
         switch place {
         case .home: selectHome()
         case .project(let id): selectProject(id)
@@ -481,7 +428,7 @@ final class ProjectStore {
     // A board that has since been removed is not worth coming back to: opening the Design
     // tab without one would start a fresh Design instead.
     func lastTab(of sessionID: UUID) -> SessionDestination {
-        let destination = lastSessionTabs[sessionID] ?? .conversation
+        let destination = navigation.lastSessionTabs[sessionID] ?? .conversation
         guard destination == .design, let session = session(sessionID) else { return destination }
         return designSession(for: sessionID) != nil || session.sourceDesignSessionID != nil
             ? .design
@@ -600,7 +547,7 @@ final class ProjectStore {
             markedUnread.remove(visibleID)
         }
         publishSidebarSessions()
-        saveIndex()
+        scheduleIndexSave()
     }
 
     // Marking as read clears both kinds of unread, so the row stops asking for the person
@@ -719,14 +666,14 @@ final class ProjectStore {
         let trimmed = name.trimmed
         guard !trimmed.isEmpty else { return }
         projects[i].name = trimmed
-        saveIndex()
+        scheduleIndexSave()
     }
 
     func setPinned(_ isPinned: Bool, forProject id: UUID) {
         guard let i = projects.firstIndex(where: { $0.id == id }),
               projects[i].isPinned != isPinned else { return }
         projects[i].isPinned = isPinned
-        saveIndex()
+        scheduleIndexSave()
     }
 
     // Gives the project another day before its old sessions are offered for deletion or
@@ -734,14 +681,14 @@ final class ProjectStore {
     func snoozeCleanup(forProject id: UUID, now: Date = Date()) {
         guard let i = projects.firstIndex(where: { $0.id == id }) else { return }
         projects[i].snoozedUntil = ProjectSnooze.extended(projects[i].snoozedUntil, now: now)
-        saveIndex()
+        scheduleIndexSave()
     }
 
     func wakeCleanup(forProject id: UUID) {
         guard let i = projects.firstIndex(where: { $0.id == id }),
               projects[i].snoozedUntil != nil else { return }
         projects[i].snoozedUntil = nil
-        saveIndex()
+        scheduleIndexSave()
     }
 
     // The snooze standing over a session, which is the one on the project it runs in. A
@@ -755,7 +702,7 @@ final class ProjectStore {
         guard let i = projects.firstIndex(where: { $0.id == id }),
               let next = projects[i].sidebarAvatar.randomArtworkIndex() else { return }
         projects[i].sidebarAvatarIndex = next
-        saveIndex()
+        scheduleIndexSave()
     }
 
     // MARK: - Workspaces
@@ -788,21 +735,21 @@ final class ProjectStore {
         guard !trimmed.isEmpty else { return }
         workspaces[i].name = trimmed
         workspaces.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        saveIndex()
+        scheduleIndexSave()
     }
 
     func setPinned(_ isPinned: Bool, forWorkspace id: UUID) {
         guard let i = workspaces.firstIndex(where: { $0.id == id }),
               workspaces[i].isPinned != isPinned else { return }
         workspaces[i].isPinned = isPinned
-        saveIndex()
+        scheduleIndexSave()
     }
 
     func changeSidebarAvatar(forWorkspace id: UUID) {
         guard let i = workspaces.firstIndex(where: { $0.id == id }),
               let next = workspaces[i].sidebarAvatar.randomArtworkIndex() else { return }
         workspaces[i].sidebarAvatarIndex = next
-        saveIndex()
+        scheduleIndexSave()
     }
 
     // A workspace is only a grouping of folders the user added elsewhere, so the projects
@@ -835,7 +782,7 @@ final class ProjectStore {
         workspaces[i].leadProjectID = projectID
         workspaces[i].projectIDs.removeAll { $0 == projectID }
         workspaces[i].projectIDs.insert(projectID, at: 0)
-        saveIndex()
+        scheduleIndexSave()
     }
 
     func setUsesWorktree(_ usesWorktree: Bool, for projectID: UUID, inWorkspace id: UUID) {
@@ -843,7 +790,7 @@ final class ProjectStore {
               workspaces[i].projectIDs.contains(projectID) else { return }
         workspaces[i].worktreeProjectIDs.removeAll { $0 == projectID }
         if usesWorktree { workspaces[i].worktreeProjectIDs.append(projectID) }
-        saveIndex()
+        scheduleIndexSave()
     }
 
     func addProject(_ projectID: UUID, toWorkspace id: UUID) {
@@ -1032,7 +979,7 @@ final class ProjectStore {
         publishSidebarSessions()
         selectedProjectID = session.projectID
         selection = .session(session.id)
-        arrived()
+        navigation.arrived()
         saveIndex()
         return session
     }
@@ -1076,7 +1023,7 @@ final class ProjectStore {
         clearSessionMemory(sessionID)
         self.selection = selection
         selectedProjectID = projectID
-        arrived()
+        navigation.arrived()
         markIndexDirty()
     }
 
@@ -1133,7 +1080,7 @@ final class ProjectStore {
             return
         }
         sessions[i].grantedDirectories.append(path)
-        saveIndex()
+        scheduleIndexSave()
     }
 
     // What a run of a task was given for the holes in its prompt, kept on the run so the
@@ -1166,7 +1113,7 @@ final class ProjectStore {
         guard let i = index(sessionID) else { return }
         guard sessions[i].settings != settings else { return }
         sessions[i].settings = settings
-        saveIndex()
+        scheduleIndexSave()
     }
 
     func saveDesignRevision(_ sessionID: UUID, screenshot: Data?,
@@ -1446,7 +1393,7 @@ final class ProjectStore {
         sessions[i].title = trimmed
         sessions[i].titleRevision = UUID()
         publishSidebarSessions()
-        saveIndex()
+        scheduleIndexSave()
     }
 
     func setGeneratedTitle(_ title: String, for request: SessionTitleRequest) {
@@ -1460,7 +1407,7 @@ final class ProjectStore {
         guard let i = index(sessionID), sessions[i].isPinned != isPinned else { return }
         sessions[i].isPinned = isPinned
         publishSidebarSessions()
-        saveIndex()
+        scheduleIndexSave()
     }
 
     // Gives a session, project or workspace the date a drag in the sidebar worked out
@@ -1477,13 +1424,13 @@ final class ProjectStore {
         } else {
             return
         }
-        saveIndex()
+        scheduleIndexSave()
     }
 
     func setAgentAvatarName(_ name: String?, for sessionID: UUID) {
         guard let i = index(sessionID), sessions[i].agentAvatarName != name else { return }
         sessions[i].agentAvatarName = name
-        saveIndex()
+        scheduleIndexSave()
     }
 
     func recordUsage(_ turn: TurnUsage, from agent: AgentKind, for sessionID: UUID) {
@@ -1530,7 +1477,7 @@ final class ProjectStore {
               !sessions[i].pullRequests.contains(where: { $0.url == pullRequest.url })
         else { return }
         sessions[i].pullRequests.append(pullRequest)
-        saveIndex()
+        scheduleIndexSave()
     }
 
     // Sessions that opened pull requests before the app watched for them, and sessions
@@ -1544,7 +1491,7 @@ final class ProjectStore {
         let found = PullRequestScanner.find(in: sessions[i])
         guard !found.isEmpty, found != sessions[i].pullRequests else { return }
         sessions[i].pullRequests = found
-        saveIndex()
+        scheduleIndexSave()
     }
 
     @discardableResult
@@ -1664,16 +1611,7 @@ final class ProjectStore {
         let url = transcriptURL(sessionID)
         // A debounced write may already be queued with an older snapshot. Delete on the
         // same queue after it, so that snapshot cannot recreate the removed transcript.
-        let files = files
-        return Self.writer.sync {
-            do {
-                try files.removeIfPresent(url)
-                return .success(())
-            } catch {
-                return .failure(PersistenceFailure(
-                    message: "The transcript at \(url.path) could not be deleted: \(error.localizedDescription)"))
-            }
-        }
+        return persistence.removeTranscript(at: url)
     }
 
     private func deleteDesignDirectory(_ session: ChatSession)
@@ -1765,19 +1703,15 @@ final class ProjectStore {
         guard let i = index(sessionID), !sessions[i].transcriptLoaded,
               transcriptLoads[sessionID] == nil else { return }
         let url = transcriptURL(sessionID)
-        let files = files
+        let persistence = persistence
         transcriptLoads[sessionID] = Task { [weak self] in
-            let outcome = await withCheckedContinuation { continuation in
-                Self.writer.async {
-                    continuation.resume(returning: Self.readTranscript(at: url, files: files))
-                }
-            }
+            let outcome = await persistence.readTranscript(at: url)
             guard !Task.isCancelled else { return }
             self?.finishTranscriptLoad(sessionID, outcome: outcome)
         }
     }
 
-    private func finishTranscriptLoad(_ sessionID: UUID, outcome: TranscriptRead) {
+    private func finishTranscriptLoad(_ sessionID: UUID, outcome: ProjectPersistence.TranscriptRead) {
         transcriptLoads[sessionID] = nil
         // Something needing the messages sooner will have read them in on the spot, and
         // whatever it found is the answer rather than this one.
@@ -1796,28 +1730,10 @@ final class ProjectStore {
         let sessionID = sessions[i].id
         transcriptLoads[sessionID]?.cancel()
         transcriptLoads[sessionID] = nil
-        let outcome = Self.readTranscript(at: transcriptURL(sessionID), files: files)
+        let outcome = persistence.readTranscriptAndWait(at: transcriptURL(sessionID))
         transcriptLoadErrors[sessionID] = outcome.error
         sessions[i].messages = outcome.messages
         sessions[i].transcriptLoaded = true
-    }
-
-    private struct TranscriptRead: Sendable {
-        var messages: [ChatMessage] = []
-        var error: String?
-    }
-
-    private nonisolated static func readTranscript(at url: URL,
-                                                   files: PersistentFileClient) -> TranscriptRead {
-        do {
-            guard let data = try files.readIfPresent(url) else { return TranscriptRead() }
-            let messages = try PersistentFile.makeDecoder().decode([ChatMessage].self, from: data)
-            return TranscriptRead(messages: messages)
-        } catch let error as DecodingError {
-            return TranscriptRead(error: PersistentFile.decodeMessage(for: url, error: error))
-        } catch {
-            return TranscriptRead(error: PersistentFile.loadMessage(for: url, error: error))
-        }
     }
 
     private func transcriptURL(_ sessionID: UUID) -> URL {
@@ -2017,7 +1933,7 @@ final class ProjectStore {
         publishSidebarSessions()
         selectedProjectID = fork.projectID
         selection = .session(fork.id)
-        arrived()
+        navigation.arrived()
         saveIndex()
         return fork
     }
@@ -2067,45 +1983,6 @@ final class ProjectStore {
         indexRevision &+= 1
     }
 
-    // Encoding a long conversation and putting it on disk is too much to pay between
-    // frames of a streaming reply, so writes happen here instead of on the main actor.
-    // One serial queue keeps them in order, and a caller that has to see the bytes on
-    // disk before its next line waits on it.
-    private static let writer = DispatchQueue(label: "com.teya.code-station.project-store-writes")
-
-    private struct PendingTranscript: Sendable {
-        let sessionID: UUID
-        let revision: Int
-        let messages: [ChatMessage]
-        let projectPath: String
-        let url: URL
-    }
-
-    private struct PendingIndex: Sendable {
-        let revision: Int
-        let value: Persisted
-    }
-
-    private struct WriteCompletion: Sendable {
-        struct Summary: Sendable {
-            let revision: Int
-            let value: SessionSummary
-        }
-
-        let generation: Int
-        var transcriptSuccesses: [UUID: Int] = [:]
-        var summaries: [UUID: Summary] = [:]
-        var transcriptFailures: [String] = []
-        var indexRevision: Int?
-        var indexSucceeded = false
-        var indexFailure: String?
-        var blockedFailures: [String] = []
-
-        var failures: [String] {
-            blockedFailures + transcriptFailures + [indexFailure].compactMap { $0 }
-        }
-    }
-
     // Coalesce the burst of writes that a streaming reply produces into one file write.
     private func scheduleSave() {
         saveTask?.cancel()
@@ -2134,7 +2011,7 @@ final class ProjectStore {
             return true
         }
 
-        var transcripts: [PendingTranscript] = []
+        var transcripts: [ProjectPersistence.PendingTranscript] = []
         var blockedFailures: [String] = []
         for sessionID in dirtyTranscripts {
             if let error = transcriptLoadErrors[sessionID] {
@@ -2147,89 +2024,38 @@ final class ProjectStore {
                 continue
             }
             let root = workingDirectory(for: sessions[i]) ?? ""
-            transcripts.append(PendingTranscript(sessionID: sessionID,
-                                                 revision: transcriptRevisions[sessionID] ?? 0,
-                                                 messages: sessions[i].messages,
-                                                 projectPath: root,
-                                                 url: transcriptURL(sessionID)))
+            transcripts.append(ProjectPersistence.PendingTranscript(
+                sessionID: sessionID, revision: transcriptRevisions[sessionID] ?? 0,
+                messages: sessions[i].messages, projectPath: root, url: transcriptURL(sessionID)))
         }
 
-        var persisted: PendingIndex?
+        var persisted: ProjectPersistence.PendingIndex?
         if indexDirty, blockedFailures.isEmpty {
-            persistSelection()
-            persisted = PendingIndex(revision: indexRevision,
-                                     value: Persisted(projects: projects, sessions: sessions,
-                                                      workspaces: workspaces))
+            navigation.persistSelection()
+            persisted = ProjectPersistence.PendingIndex(
+                revision: indexRevision,
+                value: ProjectPersistence.Index(projects: projects, sessions: sessions, workspaces: workspaces))
         }
         guard !transcripts.isEmpty || persisted != nil else {
             saveError = blockedFailures.isEmpty ? nil : blockedFailures.joined(separator: "\n")
             return blockedFailures.isEmpty && dirtyTranscripts.isEmpty && !indexDirty
         }
 
-        let indexURL = storeURL
-        let files = files
-        let pendingTranscripts = transcripts
-        let pendingIndex = persisted
-        let pendingBlockedFailures = blockedFailures
         saveGeneration &+= 1
-        let generation = saveGeneration
-        let job: @Sendable () -> WriteCompletion = {
-            var completion = WriteCompletion(generation: generation,
-                                             blockedFailures: pendingBlockedFailures)
-            // Only this app reads the transcripts back, so they skip the pretty
-            // formatting; the index stays readable for a human poking at it.
-            let transcriptEncoder = JSONEncoder()
-            transcriptEncoder.outputFormatting = .withoutEscapingSlashes
-            transcriptEncoder.dateEncodingStrategy = .iso8601
-            for transcript in pendingTranscripts {
-                let summary = SessionSummary.of(transcript.messages,
-                                                projectPath: transcript.projectPath)
-                do {
-                    let data = try transcriptEncoder.encode(transcript.messages)
-                    try files.write(data, transcript.url)
-                    completion.transcriptSuccesses[transcript.sessionID] = transcript.revision
-                    completion.summaries[transcript.sessionID] = WriteCompletion.Summary(
-                        revision: transcript.revision, value: summary)
-                } catch {
-                    completion.transcriptFailures.append(
-                        PersistentFile.saveMessage(for: transcript.url, error: error))
-                }
-            }
-            guard let pendingIndex else { return completion }
-            completion.indexRevision = pendingIndex.revision
-            guard completion.transcriptFailures.isEmpty else {
-                completion.indexFailure = "The project index was not saved because a transcript could not be saved."
-                return completion
-            }
-            do {
-                var value = pendingIndex.value
-                for (sessionID, summary) in completion.summaries {
-                    guard let i = value.sessions.firstIndex(where: { $0.id == sessionID }) else {
-                        continue
-                    }
-                    value.sessions[i].summary = summary.value
-                }
-                let data = try PersistentFile.makeEncoder().encode(value)
-                try files.write(data, indexURL)
-                completion.indexSucceeded = true
-            } catch {
-                completion.indexFailure = PersistentFile.saveMessage(for: indexURL, error: error)
-            }
-            return completion
-        }
+        let batch = ProjectPersistence.Batch(generation: saveGeneration, transcripts: transcripts,
+                                             index: persisted, blockedFailures: blockedFailures)
         if waiting {
-            finishWrite(Self.writer.sync(execute: job), asynchronous: false)
+            finishWrite(persistence.writeAndWait(batch), asynchronous: false)
             return dirtyTranscripts.isEmpty && !indexDirty
         }
         asynchronousWriteInFlight = true
-        Self.writer.async { [weak self] in
-            let completion = job()
+        persistence.write(batch) { [weak self] completion in
             Task { @MainActor in self?.finishWrite(completion, asynchronous: true) }
         }
         return blockedFailures.isEmpty
     }
 
-    private func finishWrite(_ completion: WriteCompletion, asynchronous: Bool) {
+    private func finishWrite(_ completion: ProjectPersistence.WriteCompletion, asynchronous: Bool) {
         var summaryChanged = false
         for (sessionID, summary) in completion.summaries
         where transcriptRevisions[sessionID] == summary.revision {
@@ -2279,8 +2105,7 @@ final class ProjectStore {
         }
         do {
             let data = try PersistentFile.makeEncoder().encode(RemovalJournal(removals: removals))
-            let files = files
-            try Self.writer.sync { try files.write(data, removalJournalURL) }
+            try persistence.writeRemovalJournal(data, to: removalJournalURL)
             return .success(())
         } catch {
             let failure = PersistenceFailure(
@@ -2357,9 +2182,9 @@ final class ProjectStore {
             refreshLoadError()
             return
         }
-        let saved: Persisted
+        let saved: ProjectPersistence.Index
         do {
-            saved = try PersistentFile.makeDecoder().decode(Persisted.self, from: data)
+            saved = try PersistentFile.makeDecoder().decode(ProjectPersistence.Index.self, from: data)
         } catch {
             indexLoadError = PersistentFile.decodeMessage(for: storeURL, error: error)
             refreshLoadError()
@@ -2382,7 +2207,7 @@ final class ProjectStore {
         // Filled in after the selection is restored, so the session that was open when it
         // was marked does not count as opened again and lose its mark at launch.
         markedUnread = Set(sessions.filter(\.isMarkedUnread).map(\.id))
-        recordVisit()
+        navigation.recordVisit()
     }
 
     private func publishSidebarSessions() {

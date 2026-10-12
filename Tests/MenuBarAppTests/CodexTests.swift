@@ -134,9 +134,9 @@ struct CodexTests {
     // MARK: - Arguments
 
     @Test func codexRunsExecWithASandboxAndStdinPrompt() {
-        let arguments = SessionRunner.arguments(agent: .codex,
+        let arguments = AgentLaunchConfiguration(agent: .codex,
                                                 settings: SessionSettings(),
-                                                defaults: SessionSettings())
+                                                defaults: SessionSettings()).arguments
         #expect(arguments.first == "exec")
         #expect(arguments.contains("--json"))
         #expect(arguments.contains("sandbox_mode=\"workspace-write\""))
@@ -150,36 +150,36 @@ struct CodexTests {
 
     @Test func codexFullAccessBypassesTheSandboxForNewAndResumedTurns() {
         let settings = SessionSettings(codexSandboxMode: CodexSandboxMode.fullAccess.rawValue)
-        let arguments = SessionRunner.arguments(agent: .codex,
+        let arguments = AgentLaunchConfiguration(agent: .codex,
                                                 settings: settings,
                                                 defaults: SessionSettings(),
-                                                writableRoots: ["/Users/jo/Code/app/.git"])
+                                                writableRoots: ["/Users/jo/Code/app/.git"]).arguments
         #expect(arguments.contains("--dangerously-bypass-approvals-and-sandbox"))
         #expect(!arguments.contains { $0.hasPrefix("sandbox_mode") })
         #expect(!arguments.contains { $0.hasPrefix("sandbox_workspace_write") })
 
-        let resumed = SessionRunner.arguments(agent: .codex,
+        let resumed = AgentLaunchConfiguration(agent: .codex,
                                               settings: settings,
                                               defaults: SessionSettings(),
-                                              resume: "thread-1")
+                                              resume: "thread-1").arguments
         #expect(resumed.contains("--dangerously-bypass-approvals-and-sandbox"))
     }
 
     @Test func codexApproveForMeKeepsTheSandboxForNewAndResumedTurns() {
         let settings = SessionSettings(codexSandboxMode: CodexSandboxMode.approveForMe.rawValue)
-        let arguments = SessionRunner.arguments(agent: .codex,
+        let arguments = AgentLaunchConfiguration(agent: .codex,
                                                 settings: settings,
                                                 defaults: SessionSettings(),
-                                                writableRoots: ["/Users/jo/Code/app/.git"])
+                                                writableRoots: ["/Users/jo/Code/app/.git"]).arguments
         #expect(arguments.contains("sandbox_mode=\"workspace-write\""))
         #expect(arguments.contains("sandbox_workspace_write.writable_roots=[\"/Users/jo/Code/app/.git\"]"))
         #expect(arguments.contains("--approve-for-me"))
         #expect(!arguments.contains("--dangerously-bypass-approvals-and-sandbox"))
 
-        let resumed = SessionRunner.arguments(agent: .codex,
+        let resumed = AgentLaunchConfiguration(agent: .codex,
                                               settings: settings,
                                               defaults: SessionSettings(),
-                                              resume: "thread-1")
+                                              resume: "thread-1").arguments
         #expect(!resumed.contains("--approve-for-me"))
         #expect(resumed.contains("approval_policy=\"on-failure\""))
         #expect(resumed.contains("approvals_reviewer=\"auto_review\""))
@@ -189,47 +189,47 @@ struct CodexTests {
     // A worktree's git metadata lives in the main checkout's .git directory, so a
     // worktree session has to open that directory up or git cannot write anything.
     @Test func aWorktreeSessionOpensTheSharedGitDirectory() {
-        let arguments = SessionRunner.arguments(agent: .codex,
+        let arguments = AgentLaunchConfiguration(agent: .codex,
                                                 settings: SessionSettings(),
                                                 defaults: SessionSettings(),
-                                                writableRoots: ["/Users/jo/Code/app/.git"])
+                                                writableRoots: ["/Users/jo/Code/app/.git"]).arguments
         #expect(arguments.contains("sandbox_workspace_write.writable_roots=[\"/Users/jo/Code/app/.git\"]"))
 
-        let withoutRoots = SessionRunner.arguments(agent: .codex,
+        let withoutRoots = AgentLaunchConfiguration(agent: .codex,
                                                    settings: SessionSettings(),
-                                                   defaults: SessionSettings())
+                                                   defaults: SessionSettings()).arguments
         #expect(!withoutRoots.contains { $0.hasPrefix("sandbox_workspace_write") })
     }
 
     @Test func codexAddsWorkspaceRootsOnANewTurnAndKeepsThemWritableOnResume() {
         let root = "/Users/jo/Code/web"
         let writable = [root, "/Users/jo/Code/api/.git"]
-        let initial = SessionRunner.arguments(agent: .codex,
+        let initial = AgentLaunchConfiguration(agent: .codex,
                                               settings: SessionSettings(),
                                               defaults: SessionSettings(),
                                               addDirectories: [root],
-                                              writableRoots: writable)
+                                              writableRoots: writable).arguments
 
         #expect(pair(initial, after: "--add-dir") == root)
         #expect(initial.contains(
             "sandbox_workspace_write.writable_roots=[\"/Users/jo/Code/web\",\"/Users/jo/Code/api/.git\"]"))
 
-        let resumed = SessionRunner.arguments(agent: .codex,
+        let resumed = AgentLaunchConfiguration(agent: .codex,
                                               settings: SessionSettings(),
                                               defaults: SessionSettings(),
                                               addDirectories: [root],
                                               writableRoots: writable,
-                                              resume: "thread-1")
+                                              resume: "thread-1").arguments
         #expect(!resumed.contains("--add-dir"))
         #expect(resumed.contains(
             "sandbox_workspace_write.writable_roots=[\"/Users/jo/Code/web\",\"/Users/jo/Code/api/.git\"]"))
     }
 
     @Test func codexResumesAThreadThroughTheSubcommand() {
-        let arguments = SessionRunner.arguments(agent: .codex,
+        let arguments = AgentLaunchConfiguration(agent: .codex,
                                                 settings: SessionSettings(),
                                                 defaults: SessionSettings(),
-                                                resume: "thread-1")
+                                                resume: "thread-1").arguments
         // Resume is a subcommand, so it has to come straight after exec.
         #expect(Array(arguments.prefix(3)) == ["exec", "resume", "thread-1"])
         // Resume takes no "--sandbox" flag, only the config override.
@@ -240,23 +240,23 @@ struct CodexTests {
     // Without this override the stream carries no reasoning items at all, and the
     // transcript would never have thinking to show for a Codex turn.
     @Test func codexIsAskedForItsReasoningSummaries() {
-        let arguments = SessionRunner.arguments(agent: .codex,
+        let arguments = AgentLaunchConfiguration(agent: .codex,
                                                 settings: SessionSettings(),
-                                                defaults: SessionSettings())
+                                                defaults: SessionSettings()).arguments
         #expect(arguments.contains("model_reasoning_summary=\"detailed\""))
 
-        let resumed = SessionRunner.arguments(agent: .codex,
+        let resumed = AgentLaunchConfiguration(agent: .codex,
                                               settings: SessionSettings(),
                                               defaults: SessionSettings(),
-                                              resume: "thread-1")
+                                              resume: "thread-1").arguments
         #expect(resumed.contains("model_reasoning_summary=\"detailed\""))
     }
 
     @Test func codexTakesItsOwnModelAndEffort() {
         let settings = SessionSettings(model: "gpt-5.6-terra", effort: "high")
-        let arguments = SessionRunner.arguments(agent: .codex,
+        let arguments = AgentLaunchConfiguration(agent: .codex,
                                                 settings: settings,
-                                                defaults: SessionSettings())
+                                                defaults: SessionSettings()).arguments
         #expect(pair(arguments, after: "--model") == "gpt-5.6-terra")
         // The sandbox is the first "-c", so the effort override is matched anywhere.
         #expect(arguments.contains("model_reasoning_effort=\"high\""))
@@ -268,20 +268,20 @@ struct CodexTests {
                                supportedEfforts: ["low", "high", "ultra"],
                                isDefault: true),
         ]
-        let arguments = SessionRunner.arguments(
+        let arguments = AgentLaunchConfiguration(
             agent: .codex,
             settings: SessionSettings(model: "gpt-5.6-astra", effort: "ultra"),
             defaults: SessionSettings(),
-            discovered: models)
+            discovered: models).arguments
 
         #expect(pair(arguments, after: "--model") == "gpt-5.6-astra")
         #expect(arguments.contains("model_reasoning_effort=\"ultra\""))
 
-        let unsupported = SessionRunner.arguments(
+        let unsupported = AgentLaunchConfiguration(
             agent: .codex,
             settings: SessionSettings(model: "gpt-5.6-astra", effort: "max"),
             defaults: SessionSettings(),
-            discovered: models)
+            discovered: models).arguments
         #expect(!unsupported.contains { $0.hasPrefix("model_reasoning_effort=") })
     }
 
@@ -289,15 +289,15 @@ struct CodexTests {
     // left off entirely and the agent's own default decides.
     @Test func aForeignModelReadsAsUnchosen() {
         let claudeChoice = SessionSettings(model: "opus")
-        let codexArguments = SessionRunner.arguments(agent: .codex,
+        let codexArguments = AgentLaunchConfiguration(agent: .codex,
                                                      settings: claudeChoice,
-                                                     defaults: SessionSettings())
+                                                     defaults: SessionSettings()).arguments
         #expect(!codexArguments.contains("--model"))
 
         let codexChoice = SessionSettings(model: "gpt-5.6-terra")
-        let claudeArguments = SessionRunner.arguments(agent: .claudeCode,
+        let claudeArguments = AgentLaunchConfiguration(agent: .claudeCode,
                                                       settings: codexChoice,
-                                                      defaults: SessionSettings())
+                                                      defaults: SessionSettings()).arguments
         #expect(!claudeArguments.contains("--model"))
     }
 

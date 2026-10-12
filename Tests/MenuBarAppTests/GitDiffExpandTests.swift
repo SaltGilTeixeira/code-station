@@ -6,6 +6,19 @@ import Testing
 // pressing one has to bring those lines back from the version the diff was made against:
 // the file on disk, the staged copy, or the file as a commit left it.
 struct GitDiffExpandTests {
+    @Test(arguments: ["x*.txt", "x?.txt", "x[yz].txt", ":(glob)x*.txt"])
+    func selectedFileNamesAreLiteral(path: String) async throws {
+        let repo = try GitRepo()
+        try repo.write(path, "selected before\n")
+        try repo.write("xyz.txt", "other before\n")
+        try repo.commit("Add files")
+        try repo.write(path, "selected after\n")
+        try repo.write("xyz.txt", "other after\n")
+        let diff = await diff(of: path, in: repo)
+        #expect(diff.lines.contains { $0.text == "+selected after" })
+        #expect(!diff.lines.contains { $0.text.contains("other after") })
+    }
+
 
     private func file(_ count: Int, changing line: Int? = nil) -> String {
         (1...count).map { number in

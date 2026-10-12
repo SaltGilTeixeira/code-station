@@ -168,9 +168,11 @@ enum FileTree {
     }
 
     static func files(beneath url: URL, includeHidden: Bool) async -> [FileNode] {
-        await Task.detached(priority: .userInitiated) {
+        guard !Task.isCancelled else { return [] }
+        let task = Task.detached(priority: .userInitiated) {
             filesOnCurrentThread(beneath: url, includeHidden: includeHidden)
-        }.value
+        }
+        return await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
     }
 
     // DirectoryEnumerator uses a synchronous iterator, so it stays in a synchronous helper

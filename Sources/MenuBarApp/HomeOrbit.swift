@@ -375,7 +375,7 @@ struct OrbitMap: View {
         let layout = OrbitLayout(map: map, width: width)
         let opening = OrbitOpening(layout: layout)
         // Pointing at a project in the sidebar lights it here too.
-        let spotlight = pointed ?? store.pointedSidebarItem.map(OrbitSpotlight.project)
+        let spotlight = pointed ?? store.navigation.pointedSidebarItem.map(OrbitSpotlight.project)
         ZStack(alignment: .topLeading) {
             Color.clear
                 .contentShape(Rectangle())

@@ -3,6 +3,31 @@ import Testing
 @testable import MenuBarApp
 
 struct FindInFilesTests {
+    @Test func boundsTheTextKeptInMemory() async throws {
+        let scratch = ScratchDirectory()
+        try Data("first".utf8).write(to: scratch.url.appendingPathComponent("a.txt"))
+        try Data("second".utf8).write(to: scratch.url.appendingPathComponent("b.txt"))
+        let files = await FileTree.files(beneath: scratch.url, includeHidden: true)
+        let loaded = await FileTextSearch.documents(for: files, byteLimit: 5)
+        #expect(loaded.documents.map(\.text) == ["first"])
+        #expect(loaded.limited)
+    }
+
+    @Test func cancelledLoadsDoNotReadFiles() async throws {
+        let scratch = ScratchDirectory()
+        try Data("text".utf8).write(to: scratch.url.appendingPathComponent("a.txt"))
+        let files = await FileTree.files(beneath: scratch.url, includeHidden: true)
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            let loaded = await FileTextSearch.documents(for: files)
+            let walked = await FileTree.files(beneath: scratch.url, includeHidden: true)
+            return (loaded, walked)
+        }
+        let (loaded, walked) = await task.value
+        #expect(loaded.documents.isEmpty)
+        #expect(walked.isEmpty)
+    }
+
 
     @Test func listsEachMatchingLineOnceWithEveryHitMarked() {
         let text = "import Foundation\n    let monitor = WindowKeyMonitor(.control, \"h\") // windowkeymonitor\nnothing\n"
@@ -134,7 +159,7 @@ struct FindInFilesTests {
         try Data().write(to: folder.appendingPathComponent("Empty.txt"))
 
         let files = await FileTree.files(beneath: folder, includeHidden: true)
-        let documents = await FileTextSearch.documents(for: files)
+        let documents = await FileTextSearch.documents(for: files).documents
 
         #expect(documents.map(\.file.name) == ["Text.swift"])
         #expect(documents.first?.text == "let text = 1")
