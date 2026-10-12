@@ -206,9 +206,6 @@ struct HomeWorkMapView: View {
 
     private var heading: some View {
         HStack(spacing: 14) {
-            Label("Your work map", systemImage: "scope")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.accent)
             Spacer(minLength: 12)
             if map.active.isEmpty {
                 Text("Nothing running")

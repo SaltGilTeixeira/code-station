@@ -73,6 +73,9 @@ struct DayRibbonSection: View {
             content(moment(at: context.date))
         }
         .background(FrameAnchorView(anchor: sectionAnchor))
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .cardSurface(cornerRadius: 16)
         .onAppear { begin() }
         .onChange(of: scanned) { begin() }
         .onDisappear {
