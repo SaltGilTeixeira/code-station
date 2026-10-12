@@ -374,10 +374,17 @@ struct DesignWebContent: NSViewRepresentable {
           const root = element === document.scrollingElement;
           const scrollable = overflow => /^(auto|scroll|overlay)$/.test(overflow)
             || (root && overflow === "visible");
-          // Keep the gesture in the page at either end of a scroll area, so reaching
-          // the bottom of a dialog cannot suddenly zoom or move the canvas.
-          if ((deltaX || phaseOnly) && scrollable(style.overflowX) && element.scrollWidth > element.clientWidth) return true;
-          if ((deltaY || phaseOnly) && scrollable(style.overflowY) && element.scrollHeight > element.clientHeight) return true;
+          // Nested scroll areas keep the gesture at their edges. The page itself
+          // must release it so zoom cannot leave part of the artboard out of reach.
+          const scrolls = (overflow, delta, offset, range) => {
+            if ((!delta && !phaseOnly) || !scrollable(overflow) || range <= 0) return false;
+            if (!root || phaseOnly) return true;
+            return delta > 0 ? offset > 1 : offset < range - 1;
+          };
+          const horizontalRange = element.scrollWidth - element.clientWidth;
+          const left = element.scrollLeft + (style.direction === "rtl" ? horizontalRange : 0);
+          if (scrolls(style.overflowX, deltaX, left, horizontalRange)
+              || scrolls(style.overflowY, deltaY, element.scrollTop, element.scrollHeight - element.clientHeight)) return true;
         }
         return false;
       };

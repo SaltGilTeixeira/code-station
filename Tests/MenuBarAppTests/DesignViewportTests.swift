@@ -69,6 +69,11 @@ struct DesignViewportTests {
 @MainActor
 @Suite(.serialized)
 struct DesignWebViewportTests {
+    private final class ScrollReceiver: NSView {
+        var events: [NSEvent] = []
+        override func scrollWheel(with event: NSEvent) { events.append(event) }
+    }
+
     @MainActor
     private final class Pane {
         let coordinator = DesignWebContent.Coordinator()
@@ -301,12 +306,8 @@ struct DesignWebViewportTests {
         #expect(try await pane.webView.evaluateJavaScript("window.clicks") as? Int == 1)
     }
 
-    @Test func scrollAreasReceiveNativeEventsWhileOtherAreasNavigateTheCanvas() async throws {
-        final class ScrollReceiver: NSView {
-            var events: [NSEvent] = []
-            override func scrollWheel(with event: NSEvent) { events.append(event) }
-        }
-
+    @Test(arguments: [Int32(-12), Int32(12)])
+    func scrollAreasReceiveNativeEventsWhileOtherAreasNavigateTheCanvas(delta: Int32) async throws {
         let pane = Pane()
         defer { pane.close() }
         try await pane.load("""
@@ -325,7 +326,7 @@ struct DesignWebViewportTests {
 
         for unit in [CGScrollEventUnit.line, .pixel] {
             let cgEvent = try #require(CGEvent(scrollWheelEvent2Source: nil, units: unit,
-                                              wheelCount: 2, wheel1: -12, wheel2: 0, wheel3: 0))
+                                              wheelCount: 2, wheel1: delta, wheel2: 0, wheel3: 0))
             let event = try #require(NSEvent(cgEvent: cgEvent))
             for bottom in [false, true] {
                 _ = try await pane.webView.evaluateJavaScript(
@@ -351,6 +352,71 @@ struct DesignWebViewportTests {
             await pane.view.scroll(event, at: CGPoint(x: 10, y: 10), over: pane.view)
             #expect(pane.view.viewport != original)
             pane.view.fit()
+        }
+    }
+
+    @Test func scrollingAtThePageTopBringsTheZoomedArtboardTopBackIntoView() async throws {
+        let pane = Pane()
+        defer { pane.close() }
+        try await pane.load("""
+            <!doctype html><style>
+            body { margin: 0; height: 200vh; }
+            </style><main>Long page</main>
+            """)
+        try await pane.settle()
+        pane.view.zoom(by: 0.6 / pane.view.viewport.scale, at: CGPoint(x: 360, y: 300))
+        try await pane.settle()
+        let original = pane.view.viewport
+        #expect(original.origin.y < 0)
+        let receiver = ScrollReceiver(frame: pane.webView.bounds)
+        pane.webView.addSubview(receiver)
+        let cgEvent = try #require(CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+                                          wheelCount: 2, wheel1: 120, wheel2: 0, wheel3: 0))
+        let event = try #require(NSEvent(cgEvent: cgEvent))
+        let point = CGPoint(x: 360, y: 300)
+
+        _ = try await pane.webView.evaluateJavaScript("window.scrollTo(0, 200)")
+        await pane.view.scroll(event, at: point, over: receiver)
+        #expect(receiver.events.count == 1)
+        #expect(pane.view.viewport == original)
+
+        _ = try await pane.webView.evaluateJavaScript("window.scrollTo(0, 0)")
+        for _ in 0..<3 {
+            await pane.view.scroll(event, at: point, over: receiver)
+        }
+        #expect(receiver.events.count == 1)
+        #expect(pane.view.viewport.origin.y >= 0)
+        #expect(pane.view.viewport.scale == original.scale)
+        #expect(try await pane.webView.evaluateJavaScript("window.scrollY") as? Int == 0)
+    }
+
+    @Test(arguments: ["ltr", "rtl"])
+    func pageScrollEdgesReleaseTheCanvasInEachDirection(direction: String) async throws {
+        let pane = Pane()
+        defer { pane.close() }
+        try await pane.load("""
+            <!doctype html><html dir="\(direction)"><style>
+            body { margin: 0; width: 200vw; height: 200vh; }
+            </style><main>Wide and tall page</main></html>
+            """)
+        try await pane.settle()
+        let left = direction == "rtl" ? -100000 : 0
+        let right = direction == "rtl" ? 0 : 100000
+        for (position, deltas) in [
+            ("\(left), 0", ["12, 0", "0, 12"]),
+            ("\(right), 100000", ["-12, 0", "0, -12"])
+        ] {
+            _ = try await pane.webView.evaluateJavaScript("window.scrollTo(\(position))")
+            for delta in deltas {
+                #expect(try await pane.webView.evaluateJavaScript(
+                    "window.__codeStationHasScrollContainer(20, 20, \(delta))") as? Bool == false)
+            }
+        }
+        let middle = direction == "rtl" ? -100 : 100
+        _ = try await pane.webView.evaluateJavaScript("window.scrollTo(\(middle), 100)")
+        for delta in ["12, 0", "0, 12", "-12, 0", "0, -12", "0, 0"] {
+            #expect(try await pane.webView.evaluateJavaScript(
+                "window.__codeStationHasScrollContainer(20, 20, \(delta))") as? Bool == true)
         }
     }
 
