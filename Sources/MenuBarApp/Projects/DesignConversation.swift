@@ -2,8 +2,11 @@ import AppKit
 import SwiftUI
 
 enum DesignConversationLayout {
-    static let headerHeight: CGFloat = 53
     static let minimizedSize = CGSize(width: 210, height: 56)
+    static let minimizedMaxWidth: CGFloat = 320
+    // The expand button sits in the top-right corner, this far in from both edges.
+    static let cornerButtonSize: CGFloat = 28
+    static let cornerButtonInset: CGFloat = 10
 
     static func inset(in workspace: CGSize) -> CGFloat {
         min(workspace.width < 720 ? 12 : 22, max(0, min(workspace.width, workspace.height) / 2))
@@ -11,31 +14,40 @@ enum DesignConversationLayout {
 
     // The folded panel follows the measured heights of the transcript and the composer, so a
     // short transcript does not leave a gap above it. A long transcript stops at the folded cap.
+    // The small tab hugs its line of text, between its minimum and maximum widths.
     static func size(in workspace: CGSize, expanded: Bool, minimized: Bool = false,
-                     composerHeight: CGFloat = 167, transcriptHeight: CGFloat = .infinity) -> CGSize {
+                     composerHeight: CGFloat = 167, transcriptHeight: CGFloat = .infinity,
+                     minimizedWidth: CGFloat = 0) -> CGSize {
         let margin = inset(in: workspace) * 2
         let available = CGSize(width: max(0, workspace.width - margin),
                                height: max(0, workspace.height - margin))
         if minimized {
-            return CGSize(width: min(minimizedSize.width, available.width),
+            let width = min(max(minimizedSize.width, minimizedWidth), minimizedMaxWidth)
+            return CGSize(width: min(width, available.width),
                           height: min(minimizedSize.height, available.height))
         }
         guard expanded else {
-            let height = min(326, headerHeight + transcriptHeight + composerHeight)
+            let height = min(326, transcriptHeight + composerHeight)
             return CGSize(width: min(880, available.width), height: min(height, available.height))
         }
         return available
     }
 
-    // The line under the title on the small tab. It names the state in words, so the state
-    // never rests on the colour of the ring alone.
-    static func minimizedHint(_ tone: SessionTone) -> String {
+    // The one line on the small tab. It names the state in words, so the state never rests
+    // on the colour of the ring alone. A running turn shows the bot's current working word.
+    static func minimizedLine(_ tone: SessionTone, word: String, waited: String?) -> String {
         switch tone {
-        case .running: "Working"
-        case .waiting: "Waiting"
+        case .running: "\(word)…"
+        case .waiting: waited.map { "Waiting… \($0)" } ?? "Waiting…"
         case .needsYou: "Needs you"
-        case .idle: "Hover to expand"
+        case .idle: "Done. Hover to expand"
         }
+    }
+
+    // The corner button takes its own presses, so a press there must not also open the panel.
+    static func isOnCornerButton(_ point: CGPoint, fromTop: CGFloat, width: CGFloat) -> Bool {
+        let reach = cornerButtonInset * 2 + cornerButtonSize
+        return fromTop < reach && point.x > width - reach
     }
 
     static func minimizedAccessibilityValue(_ tone: SessionTone) -> String {
@@ -107,11 +119,11 @@ struct DesignConversationDismissal: NSViewRepresentable {
                   event.window === window, window.attachedSheet == nil else { return event }
             let point = convert(event.locationInWindow, from: nil)
             guard expanded else {
-                // The header has its own fold button, and a press in the composer is someone
-                // about to type, so only a press on the transcript between them opens the panel.
+                // The corner has its own expand button, and a press in the composer is someone
+                // about to type, so only a press on the rest of the transcript opens the panel.
                 let fromTop = isFlipped ? point.y : bounds.maxY - point.y
-                let transcript = fromTop > DesignConversationLayout.headerHeight
-                    && fromTop < bounds.height - footerHeight
+                let transcript = fromTop < bounds.height - footerHeight
+                    && !DesignConversationLayout.isOnCornerButton(point, fromTop: fromTop, width: bounds.width)
                 if event.type == .leftMouseDown, bounds.contains(point), transcript {
                     expand?()
                 } else if event.type != .keyDown, !bounds.contains(point) {
