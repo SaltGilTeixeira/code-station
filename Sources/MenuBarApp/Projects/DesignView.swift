@@ -19,6 +19,9 @@ struct DesignView: View {
     @FocusState private var conversationToggleFocused: Bool
     @State private var conversationExpanded = false
     @State private var conversationMinimized = false
+    @State private var conversationHovered = false
+    @State private var cornerHovered = false
+    @State private var minimizedWidth: CGFloat = 0
     @State private var designEmpty = false
     @State private var hasOpenedConversation = false
     @State private var transcriptAtBottom = true
@@ -87,64 +90,20 @@ struct DesignView: View {
     private func floatingConversation(_ session: ChatSession, size: CGSize) -> some View {
         let panelSize = DesignConversationLayout.size(in: size, expanded: conversationExpanded,
                                                       minimized: conversationMinimized, composerHeight: composerHeight,
-                                                      transcriptHeight: transcriptHeight)
-        let footerHeight = min(composerHeight, max(0, panelSize.height - DesignConversationLayout.headerHeight))
+                                                      transcriptHeight: transcriptHeight,
+                                                      minimizedWidth: minimizedWidth)
+        let footerHeight = min(composerHeight, panelSize.height)
         let needsYou = runner.question(sessionID) != nil || runner.waitIsStale(sessionID)
             || hasTurnEndAction(runner.state(sessionID))
         return VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                Button {
-                    if !designEmpty { conversationExpanded.toggle() }
-                } label: {
-                    HStack(spacing: 9) {
-                        conversationBot(session, needsYou: needsYou, size: 20)
-                        Text("Conversation")
-                            .font(.system(size: 13, weight: .semibold))
-                        Spacer(minLength: 4)
-                        if needsYou {
-                            StateLight(tone: .needsYou, size: 6)
-                            Text("Needs you").foregroundStyle(Theme.attentionText)
-                        } else if runner.state(sessionID).isBusy {
-                            StateLight(tone: .running, size: 6)
-                            Text("Working").foregroundStyle(.secondary)
-                        } else if !designEmpty {
-                            Text(conversationExpanded ? "Collapse" : "Expand")
-                                .foregroundStyle(.secondary)
-                        }
-                        if !designEmpty {
-                            Image(systemName: conversationExpanded ? "chevron.down" : "arrow.up.left.and.arrow.down.right")
-                        }
-                    }
-                    .font(.system(size: 11))
-                    .padding(.horizontal, 18)
-                    .frame(height: DesignConversationLayout.headerHeight)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusable()
-                .focused($conversationToggleFocused)
-                .focusEffectDisabled()
-                .onKeyPress(keys: [.space, .return]) { _ in
-                    if !designEmpty { conversationExpanded.toggle() }
-                    return .handled
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(conversationToggleFocused ? Theme.accent : .clear, lineWidth: 2)
-                        .padding(4)
-                        .allowsHitTesting(false)
-                }
-                .accessibilityLabel("Conversation")
-                .accessibilityValue((conversationExpanded ? "Expanded" : "Collapsed")
-                    + (needsYou ? ", needs you" : runner.state(sessionID).isBusy ? ", working" : ""))
-                .accessibilityHint(designEmpty ? ""
-                    : conversationExpanded ? "Collapse the transcript" : "Expand the transcript")
-            }
-
             transcript(session, width: panelSize.width)
-                .frame(width: panelSize.width,
-                       height: max(0, panelSize.height - DesignConversationLayout.headerHeight - footerHeight))
+                .frame(width: panelSize.width, height: max(0, panelSize.height - footerHeight))
                 .clipped()
+                .overlay(alignment: .topTrailing) {
+                    if !designEmpty {
+                        conversationToggle
+                    }
+                }
             Divider().overlay(Theme.hairline)
             ScrollView {
                 VStack(spacing: 0) {
@@ -160,6 +119,9 @@ struct DesignView: View {
             .scrollBounceBehavior(.basedOnSize)
             .frame(maxHeight: .infinity)
         }
+        .onHover { conversationHovered = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Conversation")
         // The panel stays built while it is small, so the transcript keeps its scroll
         // position and the composer keeps its text.
         .opacity(conversationMinimized ? 0 : 1)
@@ -202,6 +164,41 @@ struct DesignView: View {
             }))
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.26), value: conversationExpanded)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.26), value: conversationMinimized)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: minimizedWidth)
+    }
+
+    // Expand and collapse live in the corner, out of the transcript's way. The button only
+    // shows while the pointer is over the panel, but it stays up while it has focus or the
+    // panel is expanded, since that is when it is the way back.
+    private var conversationToggle: some View {
+        let visible = conversationHovered || conversationExpanded || conversationToggleFocused
+        return Button {
+            conversationExpanded.toggle()
+        } label: {
+            Image(systemName: conversationExpanded ? "chevron.down" : "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(cornerHovered ? .primary : .secondary)
+                .frame(width: DesignConversationLayout.cornerButtonSize,
+                       height: DesignConversationLayout.cornerButtonSize)
+                .background(Circle().fill(cornerHovered ? Theme.field : Theme.card))
+                .overlay(Circle().stroke(conversationToggleFocused ? Theme.accent : Theme.border,
+                                         lineWidth: conversationToggleFocused ? 2 : 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .focusable()
+        .focused($conversationToggleFocused)
+        .focusEffectDisabled()
+        .onKeyPress(keys: [.space, .return]) { _ in
+            conversationExpanded.toggle()
+            return .handled
+        }
+        .onHover { cornerHovered = $0 }
+        .appTooltip(conversationExpanded ? "Collapse" : "Expand")
+        .padding(DesignConversationLayout.cornerButtonInset)
+        .opacity(visible ? 1 : 0)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.15), value: visible)
+        .accessibilityLabel(conversationExpanded ? "Collapse the conversation" : "Expand the conversation")
     }
 
     private func conversationTone(needsYou: Bool) -> SessionTone {
@@ -229,24 +226,22 @@ struct DesignView: View {
     // and by assistive tools too.
     private func minimizedConversation(_ session: ChatSession, needsYou: Bool) -> some View {
         let tone = conversationTone(needsYou: needsYou)
+        let personality = AgentAvatarSelection.avatar(named: session.agentAvatarName,
+                                                      from: appSettings.agentAvatars).personality
         return Button {
             conversationMinimized = false
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: 11) {
                 conversationBot(session, needsYou: needsYou, size: 30)
-                    .padding(.leading, -4)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Conversation")
-                        .font(.system(size: 13, weight: .semibold))
-                    Text(DesignConversationLayout.minimizedHint(tone))
-                        .font(.system(size: 11, weight: tone == .idle ? .regular : .medium))
-                        .foregroundStyle(tone.band?.word ?? Color.secondary)
-                        .lineLimit(1)
+                MinimizedConversationLine(tone: tone, personality: personality,
+                                          waitingSince: runner.waitingSince(sessionID)) { lineWidth in
+                    // The tab hugs its line: the bot, the gap and the padding around them.
+                    minimizedWidth = 14 + 30 + 11 + lineWidth + 18
                 }
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.leading, 14)
+            .padding(.trailing, 18)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -366,50 +361,16 @@ struct DesignView: View {
         }
     }
 
-    // What the agent is doing, under the conversation. A held-open turn looks exactly
-    // like a working one from the outside, so a wait names the task keeping it open
-    // instead of going on claiming the canvas is being worked on. Once the wait has gone
-    // stale the line drops the live colour too: nothing is coming back from that task,
-    // and the pane has to agree with the NEEDS YOU the header is already showing.
-    @ViewBuilder
+    // The same row the chat shows while a turn runs, so the bot speaks here with its own
+    // working words. A held-open turn names the task keeping it open instead.
     private func designStatus(_ session: ChatSession) -> some View {
-        if let waitingSince = runner.waitingSince(sessionID) {
-            let stale = runner.waitIsStale(sessionID)
-            let tasks = runner.backgroundTasks(sessionID)
-            // Nothing arrives to redraw a parked turn, so the wait has to count itself up.
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
-                HStack(spacing: 6) {
-                    StateLight(tone: stale ? .needsYou : .waiting, size: 6)
-                    Text(stale
-                         ? "Nothing has come back from \(BackgroundTaskPhrase.of(tasks))"
-                         : "Waiting for \(BackgroundTaskPhrase.of(tasks))")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(stale ? Theme.attentionText : .secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text(RelativeTime.duration(since: waitingSince))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-            // Past one task the line can only carry a count, so the names live here.
-            .appTooltip {
-                Tooltip(title: stale
-                            ? "\(session.agent.title) answered, and the turn has been held open "
-                              + "long past the point where this was going to report."
-                            : "\(session.agent.title) has answered and is holding the turn open.",
-                        note: tasks.map(\.label).joined(separator: "\n"))
-            }
-        } else {
-            HStack(spacing: 6) {
-                StateLight(tone: .running, size: 6)
-                Text("\(session.agent.title) is shaping the canvas…")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        }
+        WorkingRow(since: runner.lastActivity(sessionID) ?? Date(),
+                   sessionID: sessionID,
+                   avatarName: session.agentAvatarName,
+                   agentTitle: session.agent.title,
+                   tasks: runner.backgroundTasks(sessionID),
+                   waitingSince: runner.waitingSince(sessionID))
+            .transition(.fadeIn)
     }
 
     private struct TranscriptShape: Equatable {
@@ -1040,4 +1001,48 @@ struct DesignSnapshotRequest: Equatable {
     let purpose: Purpose
     var rect: CGRect?
     var additionalContext: String?
+}
+
+// The one line on the minimized tab. A running turn walks the bot's working words, the way
+// the row in the transcript does, and a wait counts itself up, so the tab keeps moving
+// while nothing arrives to redraw it.
+private struct MinimizedConversationLine: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    let tone: SessionTone
+    let personality: AgentPersonality
+    let waitingSince: Date?
+    let measured: (CGFloat) -> Void
+
+    @State private var words = WorkingWords()
+    @State private var started = Date()
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let word = words.word(after: context.date.timeIntervalSince(started))
+            let line = DesignConversationLayout.minimizedLine(
+                tone, word: word, waited: waitingSince.map { RelativeTime.duration(since: $0) })
+            let font: Font = tone == .running || tone == .waiting ? .mono(12, .medium)
+                : .system(size: 12, weight: tone == .needsYou ? .semibold : .regular)
+            Text(line)
+                .font(font)
+                .foregroundStyle(tone == .needsYou ? Theme.attentionText
+                                 : tone == .idle ? Color.secondary : Color.primary)
+                .monospacedDigit()
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .id(tone == .running ? word : "")
+                .transition(.fadeIn)
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: word)
+                .background {
+                    Text(line).font(font).monospacedDigit().fixedSize().hidden()
+                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { measured($0) }
+                }
+        }
+        .onAppear { words = WorkingWords(personality: personality) }
+        .onChange(of: personality) { _, personality in
+            words = WorkingWords(personality: personality)
+            started = .now
+        }
+    }
 }

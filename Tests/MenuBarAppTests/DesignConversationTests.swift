@@ -25,7 +25,11 @@ struct DesignConversationLayoutTests {
         #expect(DesignConversationLayout.size(in: workspace, expanded: false)
                 == CGSize(width: 880, height: 326))
         #expect(DesignConversationLayout.size(in: workspace, expanded: false, composerHeight: 167, transcriptHeight: 60)
-                == CGSize(width: 880, height: 280))
+                == CGSize(width: 880, height: 227))
+        #expect(DesignConversationLayout.size(in: workspace, expanded: false, minimized: true, minimizedWidth: 260)
+                == CGSize(width: 260, height: 56))
+        #expect(DesignConversationLayout.size(in: workspace, expanded: false, minimized: true, minimizedWidth: 500)
+                == CGSize(width: 320, height: 56))
         #expect(DesignConversationLayout.size(in: workspace, expanded: true, transcriptHeight: 60)
                 == CGSize(width: 1156, height: 756))
         #expect(DesignConversationLayout.size(in: workspace, expanded: true)
@@ -36,10 +40,12 @@ struct DesignConversationLayoutTests {
 
     // Running and waiting share a colour, so the words are what tell them apart.
     @Test func minimizedTabNamesEachStateInWords() {
-        #expect(DesignConversationLayout.minimizedHint(.running) == "Working")
-        #expect(DesignConversationLayout.minimizedHint(.waiting) == "Waiting")
-        #expect(DesignConversationLayout.minimizedHint(.needsYou) == "Needs you")
-        #expect(DesignConversationLayout.minimizedHint(.idle) == "Hover to expand")
+        #expect(DesignConversationLayout.minimizedLine(.running, word: "Putting the kettle on", waited: nil)
+                == "Putting the kettle on…")
+        #expect(DesignConversationLayout.minimizedLine(.waiting, word: "Brewing", waited: "1m 12s")
+                == "Waiting… 1m 12s")
+        #expect(DesignConversationLayout.minimizedLine(.needsYou, word: "Brewing", waited: nil) == "Needs you")
+        #expect(DesignConversationLayout.minimizedLine(.idle, word: "Brewing", waited: nil) == "Done. Hover to expand")
         #expect(DesignConversationLayout.minimizedAccessibilityValue(.running) == "Minimized, working")
         #expect(DesignConversationLayout.minimizedAccessibilityValue(.waiting) == "Minimized, waiting")
         #expect(DesignConversationLayout.minimizedAccessibilityValue(.needsYou) == "Minimized, needs you")
@@ -84,7 +90,7 @@ struct DesignConversationDismissalTests {
         #expect(collapses.isEmpty)
     }
 
-    @Test func pressesOnTheFoldedTranscriptExpandItButNotOnTheHeaderComposerOrOutside() throws {
+    @Test func pressesOnTheFoldedTranscriptExpandItButNotOnTheCornerButtonComposerOrOutside() throws {
         let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 800, height: 600),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         let observer = DesignConversationDismissal.ObserverView(frame: CGRect(x: 20, y: 20, width: 405, height: 144))
@@ -98,13 +104,13 @@ struct DesignConversationDismissalTests {
                 modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
                 context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
         }
-        let header = try click(CGPoint(x: 100, y: 150))
-        #expect(observer.handle(header, frontmost: window) === header)
+        let corner = try click(CGPoint(x: 400, y: 150))
+        #expect(observer.handle(corner, frontmost: window) === corner)
         _ = observer.handle(try click(CGPoint(x: 600, y: 400)), frontmost: window)
         let composer = try click(CGPoint(x: 100, y: 40))
         #expect(observer.handle(composer, frontmost: window) === composer)
         #expect(expands == 0)
-        let body = try click(CGPoint(x: 100, y: 100))
+        let body = try click(CGPoint(x: 100, y: 150))
         #expect(observer.handle(body, frontmost: window) === body)
         #expect(expands == 1)
         observer.enabled = false
@@ -190,7 +196,11 @@ struct DesignConversationViewTests {
         let viewport = try #require(descendants(hosting.view).compactMap { $0 as? DesignCanvasViewport }.first)
         let canvasFrame = viewport.convert(viewport.bounds, to: nil)
         let compactFrame = observer.convert(observer.bounds, to: nil)
-        try click(CGPoint(x: compactFrame.midX, y: compactFrame.maxY - 26))
+        let transcriptPress = try #require(NSEvent.mouseEvent(with: .leftMouseDown,
+            location: CGPoint(x: compactFrame.midX, y: compactFrame.maxY - 26),
+            modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+            context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        #expect(observer.handle(transcriptPress, frontmost: window) === transcriptPress)
         try await settle()
         #expect(observer.expanded)
         #expect(abs(composer.convert(composer.bounds, to: nil).minY - composerFrame.minY) < 1)
@@ -244,7 +254,9 @@ struct DesignConversationViewTests {
         try await settle()
         #expect(!observer.expanded)
         #expect(observer.minimized)
-        #expect(observer.bounds.size == DesignConversationLayout.minimizedSize)
+        #expect(observer.bounds.height == DesignConversationLayout.minimizedSize.height)
+        #expect((DesignConversationLayout.minimizedSize.width...DesignConversationLayout.minimizedMaxWidth)
+                .contains(observer.bounds.width))
         #expect(window.firstResponder !== composer)
         #expect(descendants(hosting.view).contains { $0 === composer })
         let tab = observer.convert(observer.bounds, to: nil)
