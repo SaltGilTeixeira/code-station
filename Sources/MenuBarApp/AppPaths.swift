@@ -184,6 +184,15 @@ enum Preferences {
         store.set(groups.map(\.rawValue), forKey: "collapsedSidebarGroups")
     }
 
+    // The last day Home's day ribbon chose between its entrance and a plain fade.
+    static func dayRibbonEntranceDay(in store: UserDefaults = .standard) -> Date? {
+        store.object(forKey: "dayRibbonEntranceDay") as? Date
+    }
+
+    static func setDayRibbonEntranceDay(_ day: Date, in store: UserDefaults = .standard) {
+        store.set(day, forKey: "dayRibbonEntranceDay")
+    }
+
     static func sidebarSessionLimit(in store: UserDefaults = .standard) -> Int {
         guard store.object(forKey: "sidebarSessionLimit") != nil else {
             return SidebarSessionVisibility.defaultLimit

@@ -23,6 +23,7 @@ struct Tooltip {
         let width: CGFloat
         let edges: ClosedRange<CGFloat>
         let content: AnyView
+        var arrival: Animation = Motion.reveal
     }
 
     let title: String
@@ -432,7 +433,7 @@ private struct HangingCard: View {
                        value: anchor)
             .accessibilityHidden(true)
             .onAppear {
-                withAnimation(reduceMotion ? .easeOut(duration: 0.12) : Motion.reveal) {
+                withAnimation(reduceMotion ? .easeOut(duration: 0.12) : hanging.arrival) {
                     arrived = true
                 }
             }

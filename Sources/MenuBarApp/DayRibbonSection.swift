@@ -11,6 +11,7 @@ struct DayRibbonSection: View {
     let onOpen: (UUID) -> Void
 
     @Environment(TooltipPresenter.self) private var tooltips
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     // One owner for every bar, so moving between bars hands the card along instead of
     // closing one and waiting to open the next.
@@ -22,35 +23,88 @@ struct DayRibbonSection: View {
     @State private var trackAnchor = FrameAnchor()
     @State private var sectionAnchor = FrameAnchor()
 
+    @State private var entrance = Entrance.waiting
+    @State private var settling: Task<Void, Never>?
+    // Where the total starts and lands, in the section's own coordinates.
+    @State private var sectionWidth: CGFloat = 0
+    @State private var trackFrame: CGRect = .zero
+    @State private var numberFrame: CGRect = .zero
+    @State private var rollSize: CGSize = .zero
+
     private static let bandHeight: CGFloat = 54
     private static let barSpacing: CGFloat = 3
     private static let cardWidth: CGFloat = 290
+    nonisolated private static let space = "dayRibbon"
+    // Resting on a bar answers almost at once. It is just long enough that a pointer
+    // passing straight over the chart does not flash a card up.
+    private static let hoverDelay = Duration.milliseconds(80)
     // Crossing the gap between two bars ends one hover just before the next begins, so
     // the card waits this long before going, in case the pointer is only passing over.
     private static let hideGrace = Duration.milliseconds(140)
+    // The card and the dimming of the other bars keep pace with the short hover delay.
+    fileprivate static let quick = Animation.easeOut(duration: 0.1)
+    private static let fade: TimeInterval = 0.18
+
+    private enum Entrance {
+        case waiting
+        case fading(since: Date)
+        case playing(RibbonEntrance, since: Date)
+        case settled
+    }
+
+    // One frame of whatever the chart is doing.
+    private struct Moment {
+        var play: RibbonEntrance?
+        var time: TimeInterval = 0
+        var chartOpacity: Double = 1
+    }
 
     private var peeking: Bool { tooltips.isShowing(owner: cardOwner) }
 
+    private var isMoving: Bool {
+        switch entrance {
+        case .fading, .playing: true
+        case .waiting, .settled: false
+        }
+    }
+
     var body: some View {
+        TimelineView(.animation(paused: !isMoving)) { context in
+            content(moment(at: context.date))
+        }
+        .background(FrameAnchorView(anchor: sectionAnchor))
+        .onAppear { begin(arriving: true) }
+        .onChange(of: scanned) { begin(arriving: false) }
+        .onDisappear {
+            pendingShow?.cancel()
+            pendingHide?.cancel()
+            settling?.cancel()
+            entrance = .settled
+            tooltips.hide(owner: cardOwner, immediately: true)
+        }
+    }
+
+    private func content(_ moment: Moment) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             ViewThatFits(in: .horizontal) {
                 HStack {
                     title.fixedSize()
                     Spacer()
-                    headline.fixedSize()
+                    headline(moment).fixedSize()
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     title
-                    headline
+                    headline(moment)
                 }
             }
-            chart
+            chart(moment)
         }
-        .background(FrameAnchorView(anchor: sectionAnchor))
-        .onDisappear {
-            pendingShow?.cancel()
-            pendingHide?.cancel()
-            tooltips.hide(owner: cardOwner, immediately: true)
+        .coordinateSpace(.named(Self.space))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { sectionWidth = $0 }
+        .overlay(alignment: .topLeading) {
+            if let play = moment.play {
+                roll(play, at: moment.time)
+            }
         }
     }
 
@@ -60,30 +114,113 @@ struct DayRibbonSection: View {
             .accessibilityAddTraits(.isHeader)
     }
 
-    private var headline: some View {
-        (Text(scanned ? DayRibbon.duration(ribbon.spent) : "Counting session time…")
-            .font(.mono(11.5, .semibold))
-            .foregroundStyle(Color.primary)
+    private func headline(_ moment: Moment) -> some View {
+        let total = DayRibbon.duration(ribbon.spent)
+        let number = moment.play?.numberOpacity(at: moment.time) ?? 1
+        let rest = moment.play?.restOpacity(at: moment.time) ?? 1
+        return (Text(scanned ? total : "Counting session time…")
+            .font(.mono(RibbonEntrance.headlineSize, .semibold))
+            .foregroundStyle(Color.primary.opacity(number))
             + Text(verbatim: scanned ? " of session time in the last 24 hours" : "")
             .font(.mono(11))
-            .foregroundStyle(.tertiary))
+            .foregroundStyle(HierarchicalShapeStyle.tertiary.opacity(rest)))
             .fixedSize(horizontal: false, vertical: true)
+            // The total leads the line, so a copy of it laid over the start of the line
+            // marks where the rolling total has to land.
+            .overlay(alignment: .topLeading) {
+                Text(total)
+                    .font(.mono(RibbonEntrance.headlineSize, .semibold))
+                    .hidden()
+                    .onGeometryChange(for: CGRect.self) {
+                        $0.frame(in: .named(Self.space))
+                    } action: { numberFrame = $0 }
+            }
     }
 
-    private var chart: some View {
+    private func chart(_ moment: Moment) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            track
+            track(moment)
             if scanned && ribbon.isEmpty {
                 emptyNote
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 11)
+        .opacity(moment.chartOpacity)
+        .contentShape(Rectangle())
+        .gesture(TapGesture().onEnded { skip() },
+                 including: moment.play == nil ? .subviews : .all)
+    }
+
+    // MARK: - Entrance
+
+    private func moment(at date: Date) -> Moment {
+        switch entrance {
+        case .waiting, .settled:
+            return Moment()
+        case .fading(let since):
+            let progress = max(0, min(1, date.timeIntervalSince(since) / Self.fade))
+            return Moment(chartOpacity: 0.35 + 0.65 * (1 - (1 - progress) * (1 - progress)))
+        case .playing(let play, let since):
+            return Moment(play: play, time: max(0, date.timeIntervalSince(since)))
+        }
+    }
+
+    // The chart makes its entrance once the scan lands. A full day plays the whole
+    // entrance the first time Home opens that day; anything else fades in, and a chart
+    // that was already read when Home opened later that day is simply there.
+    private func begin(arriving: Bool) {
+        guard case .waiting = entrance, scanned else { return }
+        let firstToday = RibbonEntrance.claimToday()
+        if firstToday && !reduceMotion && RibbonEntrance.isDeserved(by: ribbon) {
+            let play = RibbonEntrance(total: DayRibbon.duration(ribbon.spent))
+            entrance = .playing(play, since: Date())
+            settle(after: play.duration)
+        } else if firstToday || !arriving {
+            entrance = .fading(since: Date())
+            settle(after: Self.fade)
+        } else {
+            entrance = .settled
+        }
+    }
+
+    private func settle(after seconds: TimeInterval) {
+        settling?.cancel()
+        settling = Task {
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            entrance = .settled
+        }
+    }
+
+    private func skip() {
+        settling?.cancel()
+        entrance = .settled
+    }
+
+    // The total, large over the chart, rolling up and then flying into the headline.
+    // Only this plain text is ever scaled; the bars sit inside menu buttons.
+    private func roll(_ play: RibbonEntrance, at time: TimeInterval) -> some View {
+        let flight = play.flight(at: time)
+        let landed = RibbonEntrance.headlineSize / RibbonEntrance.rollSize
+        let start = CGPoint(x: (sectionWidth - rollSize.width) / 2,
+                            y: trackFrame.midY - rollSize.height / 2 - 4)
+        let end = CGPoint(x: numberFrame.minX,
+                          y: numberFrame.midY - rollSize.height * landed / 2)
+        return RollingTotal(play: play, time: time)
+            .fixedSize()
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { rollSize = $0 }
+            .scaleEffect(1 + (landed - 1) * flight, anchor: .topLeading)
+            .offset(x: start.x + (end.x - start.x) * flight,
+                    y: start.y + (end.y - start.y) * flight)
+            .opacity(play.rollOpacity(at: time))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     // MARK: - Band
 
-    private var track: some View {
+    private func track(_ moment: Moment) -> some View {
         GeometryReader { geometry in
             let count = max(1, min(64, Int(geometry.size.width / 7)))
             let activity = ribbon.activity(bucketCount: count)
@@ -91,14 +228,8 @@ struct DayRibbonSection: View {
             let barWidth = (geometry.size.width - Self.barSpacing * Double(count - 1)) / Double(count)
             HStack(alignment: .bottom, spacing: Self.barSpacing) {
                 ForEach(Array(activity.enumerated()), id: \.offset) { index, bucket in
-                    let fraction = scanned ? bucket.spent / peak : 0
-                    let height = max(4, Self.bandHeight * fraction)
                     let live = scanned && bucket.spent > 0
-                    let face = RibbonBar(bucket: bucket,
-                                         height: height,
-                                         opacity: live ? 0.55 + fraction * 0.3 : 0.22,
-                                         dimmed: peeking && shownBar != index,
-                                         stacked: peeking && shownBar == index)
+                    let face = face(bucket, index: index, of: count, peak: peak, moment: moment)
                     if live {
                         let place = BarPlace(index: index, bucket: bucket,
                                              x: Double(index) * (barWidth + Self.barSpacing),
@@ -120,13 +251,42 @@ struct DayRibbonSection: View {
                     }
                 }
             }
+            .opacity(moment.play?.chartOpacity(at: moment.time) ?? 1)
+            .allowsHitTesting(moment.play == nil)
             .background(FrameAnchorView(anchor: trackAnchor))
         }
         .frame(height: Self.bandHeight)
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .named(Self.space))
+        } action: { trackFrame = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(scanned
             ? "Session activity over the last 24 hours. Taller bars mean more session time."
             : "Counting session activity")
+    }
+
+    // A bar at rest, or where the entrance has it. Only the height, the opacity and the
+    // colour's mask move, never a transform, since the bar sits inside a menu button.
+    private func face(_ bucket: DayRibbon.Activity, index: Int, of count: Int,
+                      peak: TimeInterval, moment: Moment) -> RibbonBar {
+        let fraction = scanned ? bucket.spent / peak : 0
+        let height = max(4, Self.bandHeight * fraction)
+        let live = scanned && bucket.spent > 0
+        var bar = RibbonBar(bucket: bucket,
+                            height: height,
+                            opacity: live ? 0.55 + fraction * 0.3 : 0.22,
+                            dimmed: peeking && shownBar != index,
+                            stacked: peeking && shownBar == index)
+        guard live, let play = moment.play else { return bar }
+        let risen = play.rise(ofBar: index, of: count, at: moment.time)
+        guard risen > 0 else {
+            bar.height = 4
+            bar.opacity = 0.22
+            return bar
+        }
+        bar.height = 4 + (height - 4) * risen
+        bar.drained = play.drain(ofBar: index, of: count, at: moment.time)
+        return bar
     }
 
     private func activityLabel(_ bucket: DayRibbon.Activity) -> String {
@@ -156,6 +316,7 @@ struct DayRibbonSection: View {
 
     private func hover(_ place: BarPlace, _ inside: Bool) {
         pendingShow?.cancel()
+        guard !isMoving else { return }
         if inside {
             hoveredBar = place.index
             pendingHide?.cancel()
@@ -164,7 +325,7 @@ struct DayRibbonSection: View {
                 return
             }
             pendingShow = Task {
-                try? await Task.sleep(for: TooltipPresenter.hoverDelay)
+                try? await Task.sleep(for: Self.hoverDelay)
                 guard !Task.isCancelled else { return }
                 showCard(place)
             }
@@ -176,6 +337,7 @@ struct DayRibbonSection: View {
 
     // A keyboard user has no pointer to rest, so focus shows the card straight away.
     private func focus(_ place: BarPlace, _ focused: Bool) {
+        guard !isMoving else { return }
         if focused {
             pendingShow?.cancel()
             pendingHide?.cancel()
@@ -203,7 +365,8 @@ struct DayRibbonSection: View {
                               hanging: Tooltip.Hanging(
                                   width: Self.cardWidth,
                                   edges: section.minX...max(section.maxX, section.minX + Self.cardWidth),
-                                  content: AnyView(RibbonCard(bucket: place.bucket)))),
+                                  content: AnyView(RibbonCard(bucket: place.bucket)),
+                                  arrival: Self.quick)),
                       from: bar, owner: cardOwner)
     }
 }
@@ -212,17 +375,27 @@ struct DayRibbonSection: View {
 
 private struct RibbonBar: View {
     let bucket: DayRibbon.Activity
-    let height: CGFloat
-    let opacity: Double
+    var height: CGFloat
+    var opacity: Double
     let dimmed: Bool
     // While its card is up the bar shows its own project mix, biggest at the bottom.
     let stacked: Bool
+    // During the entrance the bar rises in its project mix, and the mix then drains away
+    // from the top to show the accent underneath. This is how much has drained so far.
+    var drained: Double?
+
+    private var showsAccent: Bool {
+        if let drained { return drained > 0 }
+        return !stacked
+    }
+
+    private var showsMix: Bool { drained != nil || stacked }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3)
                 .fill(Theme.accent.opacity(opacity))
-                .opacity(stacked ? 0 : 1)
+                .opacity(showsAccent ? 1 : 0)
             VStack(spacing: 0) {
                 ForEach(bucket.projects.reversed()) { share in
                     Rectangle()
@@ -231,13 +404,16 @@ private struct RibbonBar: View {
                 }
             }
             .clipShape(UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3))
-            .opacity(stacked ? 1 : 0)
+            .mask(alignment: .bottom) {
+                Rectangle().frame(height: height * (1 - (drained ?? 0)))
+            }
+            .opacity(showsMix ? 1 : 0)
         }
         .frame(height: height)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .opacity(dimmed ? 0.3 : 1)
-        .motion(Motion.reveal, value: dimmed)
-        .motion(Motion.reveal, value: stacked)
+        .motion(DayRibbonSection.quick, value: dimmed)
+        .motion(DayRibbonSection.quick, value: stacked)
         .contentShape(Rectangle())
     }
 
@@ -245,6 +421,76 @@ private struct RibbonBar: View {
     // environment the button sets.
     func onFocusChange(_ handler: @escaping (Bool) -> Void) -> some View {
         FocusReader(handler: handler) { self }
+    }
+}
+
+// MARK: - Rolling total
+
+// The day's total as an odometer: each digit is a strip of numbers turning behind a
+// one-digit window, and the strips come to rest left to right.
+private struct RollingTotal: View {
+    let play: RibbonEntrance
+    let time: TimeInterval
+
+    private enum Piece {
+        case digit(column: Int)
+        case unit(String, last: Bool)
+    }
+
+    private static let line: CGFloat = 52
+
+    private var pieces: [Piece] {
+        var pieces: [Piece] = []
+        var column = 0
+        let characters = Array(play.total.filter { $0 != " " })
+        for (index, character) in characters.enumerated() {
+            if character.isWholeNumber {
+                pieces.append(.digit(column: column))
+                column += 1
+            } else {
+                pieces.append(.unit(String(character), last: index == characters.count - 1))
+            }
+        }
+        return pieces
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 2) {
+            ForEach(Array(pieces.enumerated()), id: \.offset) { _, piece in
+                switch piece {
+                case .digit(let column):
+                    digit(column)
+                case .unit(let unit, let last):
+                    Text(verbatim: unit)
+                        .font(.mono(18, .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 3)
+                        .padding(.trailing, last ? 0 : 10)
+                }
+            }
+        }
+    }
+
+    private func digit(_ column: Int) -> some View {
+        let turned = play.turn(ofDigit: column, at: time).truncatingRemainder(dividingBy: 10)
+        return numeral("0")
+            .hidden()
+            .overlay(alignment: .top) {
+                VStack(spacing: 0) {
+                    ForEach(0...10, id: \.self) { value in
+                        numeral("\(value % 10)")
+                    }
+                }
+                .offset(y: -turned * Self.line)
+            }
+            .clipped()
+    }
+
+    private func numeral(_ value: String) -> some View {
+        Text(verbatim: value)
+            .font(.serif(RibbonEntrance.rollSize, .medium))
+            .monospacedDigit()
+            .frame(height: Self.line)
     }
 }
 
