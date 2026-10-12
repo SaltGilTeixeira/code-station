@@ -453,10 +453,12 @@ struct HomeMapActionRow: View {
                 Text(live.session.title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .lineLimit(1)
-                detail
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(needs ? Theme.attentionText : .secondary)
-                    .lineLimit(1)
+                if let request {
+                    request
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(needs ? Theme.attentionText : .secondary)
+                        .lineLimit(1)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Text(showsProject ? age : "\(live.session.agent.title) · \(age)")
@@ -483,11 +485,9 @@ struct HomeMapActionRow: View {
 
     private var age: String { RelativeTime.short(live.session.lastActivity) }
 
-    // What the session is asking for, or else what it is doing.
-    private var detail: Text {
-        guard let permission = live.permission else {
-            return Text(live.activity.prefix(1).uppercased() + live.activity.dropFirst())
-        }
+    // What the session is asking for. A row with nothing to ask shows only its title.
+    private var request: Text? {
+        guard let permission = live.permission else { return nil }
         if let question = permission.questions.first { return Text(question.text) }
         let subject = permission.subject.components(separatedBy: .newlines).first ?? ""
         guard !permission.subjectIsMarkdown, !subject.isEmpty else { return Text(permission.title) }
