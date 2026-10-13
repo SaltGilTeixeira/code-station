@@ -457,26 +457,6 @@ struct SettingsView: View {
                             seat: paneSeat) {
                                 navigate(to: choice)
                             }
-                        if choice == .appearance {
-                            Button {
-                                bots.leave(using: dialogs) {
-                                    show { tab = .appearance; bots.isPresented = true }
-                                    searchTarget = nil
-                                }
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Circle().fill(Theme.accent).frame(width: 5, height: 5)
-                                    Text("Your bots").font(.system(size: 12, weight: .medium))
-                                    Spacer()
-                                }
-                                .foregroundStyle(tab == .appearance && bots.isPresented ? Theme.accent : .secondary)
-                                .padding(.leading, 40)
-                                .frame(height: 28)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityValue(tab == .appearance && bots.isPresented ? "Selected" : "Not selected")
-                        }
                     }
                 }
             } else if searchResults.isEmpty {
