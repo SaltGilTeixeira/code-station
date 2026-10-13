@@ -16,10 +16,7 @@ struct DayRibbonSection: View {
     // One owner for every bar, so moving between bars hands the card along instead of
     // closing one and waiting to open the next.
     @State private var cardOwner = UUID()
-    @State private var shownBar: Int?
-    @State private var hoveredBar: Int?
-    @State private var pendingShow: Task<Void, Never>?
-    @State private var pendingHide: Task<Void, Never>?
+    @State private var card = CardState()
     @State private var trackAnchor = FrameAnchor()
     @State private var sectionAnchor = FrameAnchor()
 
@@ -83,8 +80,8 @@ struct DayRibbonSection: View {
         .onAppear { begin() }
         .onChange(of: scanned) { begin() }
         .onDisappear {
-            pendingShow?.cancel()
-            pendingHide?.cancel()
+            card.pendingShow?.cancel()
+            card.pendingHide?.cancel()
             settling?.cancel()
             entrance = .waiting
             tooltips.hide(owner: cardOwner, immediately: true)
@@ -290,8 +287,8 @@ struct DayRibbonSection: View {
         }
         var bar = RibbonBar(segments: bucket.segments(height: Self.bandHeight * bucket.spent / peak,
                                                       rank: rank),
-                            dimmed: peeking && shownBar != index,
-                            shown: peeking && shownBar == index)
+                            dimmed: peeking && card.shown != index,
+                            shown: peeking && card.shown == index)
         if let play = moment.play {
             bar.grown = play.grow(ofBar: index, of: count, at: moment.time)
             bar.drained = play.drain(ofBar: index, of: count, at: moment.time)
@@ -366,22 +363,25 @@ struct DayRibbonSection: View {
     }
 
     private func hover(_ place: BarPlace, _ inside: Bool) {
-        pendingShow?.cancel()
         guard !isMoving else { return }
         if inside {
-            hoveredBar = place.index
-            pendingHide?.cancel()
+            card.pendingShow?.cancel()
+            card.pendingHide?.cancel()
+            card.hovered = place.index
             if peeking {
                 showCard(place)
                 return
             }
-            pendingShow = Task {
+            card.pendingShow = Task {
                 try? await Task.sleep(for: Self.hoverDelay)
                 guard !Task.isCancelled else { return }
                 showCard(place)
             }
-        } else if hoveredBar == place.index {
-            hoveredBar = nil
+        } else if card.hovered == place.index {
+            // Moving to the next bar can report the new bar's hover before this one
+            // ends, so only the bar still under the pointer may cancel what is pending.
+            card.pendingShow?.cancel()
+            card.hovered = nil
             hideCard()
         }
     }
@@ -390,17 +390,17 @@ struct DayRibbonSection: View {
     private func focus(_ place: BarPlace, _ focused: Bool) {
         guard !isMoving else { return }
         if focused {
-            pendingShow?.cancel()
-            pendingHide?.cancel()
+            card.pendingShow?.cancel()
+            card.pendingHide?.cancel()
             showCard(place)
-        } else if hoveredBar == nil && shownBar == place.index {
+        } else if card.hovered == nil && card.shown == place.index {
             hideCard()
         }
     }
 
     private func hideCard() {
-        pendingHide?.cancel()
-        pendingHide = Task {
+        card.pendingHide?.cancel()
+        card.pendingHide = Task {
             try? await Task.sleep(for: Self.hideGrace)
             guard !Task.isCancelled else { return }
             tooltips.hide(owner: cardOwner, immediately: true)
@@ -411,7 +411,7 @@ struct DayRibbonSection: View {
         guard let track = trackAnchor.frame(), let section = sectionAnchor.frame() else { return }
         let bar = CGRect(x: track.minX + place.x, y: track.minY,
                          width: place.width, height: track.height)
-        shownBar = place.index
+        card.shown = place.index
         tooltips.show(Tooltip(title: "",
                               hanging: Tooltip.Hanging(
                                   width: Self.cardWidth,
@@ -420,6 +420,19 @@ struct DayRibbonSection: View {
                                   arrival: Self.quick)),
                       from: bar, owner: cardOwner)
     }
+}
+
+// Which bar has its card up and which one the pointer is on. SwiftUI can report a hover
+// in the middle of an update, and a change to view state made then is lost while the
+// card still moves on, so the chart would light a different bar from the one the card
+// describes. A change to an observable object is not lost that way.
+@MainActor
+@Observable
+private final class CardState {
+    var shown: Int?
+    @ObservationIgnored var hovered: Int?
+    @ObservationIgnored var pendingShow: Task<Void, Never>?
+    @ObservationIgnored var pendingHide: Task<Void, Never>?
 }
 
 // MARK: - Bar
