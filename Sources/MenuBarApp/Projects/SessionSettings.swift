@@ -248,6 +248,23 @@ enum DesignAmbition: String, CaseIterable, Identifiable {
     static func valid(_ value: String?) -> Self? {
         value.flatMap(Self.init(rawValue:))
     }
+
+    // What a session runs with: its own choice, or the app's Design default.
+    static func resolved(_ value: String?, in store: UserDefaults = .standard) -> Self {
+        valid(value) ?? Preferences.designAmbition(in: store)
+    }
+
+    func changeNote(from previous: DesignAmbition) -> String {
+        "Design ambition changed from \(previous.title) to \(title)."
+    }
+
+    // Put in front of the first prompt after a change. The level also sits in the system
+    // prompt, but the conversation is full of work pitched at the old one, so the change
+    // has to be said out loud for the agent to act on it.
+    func changePrompt(from previous: DesignAmbition) -> String {
+        "The design ambition has changed from \(previous.title) to \(title). \(title) means: "
+            + "\(detail) Bring the design in line with the new level as you work on this request."
+    }
 }
 
 // The permission modes Claude Code takes, minus the ones that have no place in a desktop

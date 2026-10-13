@@ -1116,6 +1116,12 @@ final class ProjectStore {
         scheduleIndexSave()
     }
 
+    func setDesignAmbitionRan(_ ambition: DesignAmbition, for sessionID: UUID) {
+        guard let i = index(sessionID), sessions[i].designAmbitionRan != ambition.rawValue else { return }
+        sessions[i].designAmbitionRan = ambition.rawValue
+        scheduleIndexSave()
+    }
+
     func saveDesignRevision(_ sessionID: UUID, screenshot: Data?,
                             sourceRevisions: [String: String], promptID: UUID? = nil)
         -> Result<DesignRevision, PersistenceFailure> {

@@ -1257,15 +1257,46 @@ final class SessionRunner {
         let titleSession = store.session(store.userFacingSessionID(for: sessionID)) ?? session
         let isFirstTurn = !next.isAppCommand && !session.hasStarted && !titleSession.hasStarted
             && titleSession.title == "New session"
+        let ambition = next.isAppCommand || next.summary != nil
+            ? nil : designAmbitionStep(sessionID, store: store)
+        if let ambition { noteDesignAmbition(ambition, sessionID: sessionID, store: store) }
         for var message in next.transcriptMessages {
             if message.role == .user { message.checkpoint = checkpoint }
             store.append(message, to: sessionID)
         }
+        let prompt = ambition?.changePrompt.map { "\($0)\n\n\(next.prompt)" } ?? next.prompt
         let avatarSequence = nextAvatarSequence(for: sessionID)
-        launch(Self.prompt(next.prompt, with: next.attachments), attachments: next.attachments,
+        launch(Self.prompt(prompt, with: next.attachments), attachments: next.attachments,
                sessionID: sessionID, store: store, avatarSequence: avatarSequence,
                canRetryWithoutResume: true, summary: next.summary,
                isFirstTurn: isFirstTurn)
+    }
+
+    // The level a Design turn is about to run with, next to the one the last Design turn
+    // ran with, so a change made between turns can be marked and told to the agent.
+    private struct DesignAmbitionStep {
+        let current: DesignAmbition
+        let previous: DesignAmbition?
+
+        var changePrompt: String? {
+            guard let previous, previous != current else { return nil }
+            return current.changePrompt(from: previous)
+        }
+    }
+
+    private func designAmbitionStep(_ sessionID: UUID, store: ProjectStore) -> DesignAmbitionStep? {
+        guard let session = store.session(sessionID), session.isActivelyDesigning else { return nil }
+        return DesignAmbitionStep(current: .resolved(session.settings?.designAmbition),
+                                  previous: .valid(session.designAmbitionRan))
+    }
+
+    // The note goes in ahead of the prompt, so it sits above the turn it applies to.
+    private func noteDesignAmbition(_ step: DesignAmbitionStep, sessionID: UUID, store: ProjectStore) {
+        store.setDesignAmbitionRan(step.current, for: sessionID)
+        if let previous = step.previous, previous != step.current {
+            store.append(ChatMessage(role: .system, text: step.current.changeNote(from: previous)),
+                         to: sessionID)
+        }
     }
 
     private func nextAvatarSequence(for sessionID: UUID) -> Int {
@@ -1592,8 +1623,7 @@ final class SessionRunner {
             additionalSystemPrompt: designArtifact.map {
                 AgentInstructions.designSystemPrompt(artifactURL: $0,
                                         canvasWidth: canvasWidths[session.id],
-                                        ambition: DesignAmbition.valid(session.settings?.designAmbition)
-                                            ?? Preferences.designAmbition())
+                                        ambition: DesignAmbition.resolved(session.settings?.designAmbition))
             } ?? implementationReference.map(AgentInstructions.implementationSystemPrompt),
             suggestsPrompts: suggestsPrompts,
             discovered: discoveredModels[agent])
@@ -2489,7 +2519,11 @@ final class SessionRunner {
     private func injectQueued(_ sessionID: UUID, store: ProjectStore) {
         guard let record = records[sessionID], let turn = record.turn, turn.waitingOnTasks,
               let next = record.queue.first, turn.summary == nil, next.summary == nil else { return }
-        let prompt = Self.prompt(next.prompt, with: next.attachments)
+        // The process was started with the old level in its system prompt, so a change
+        // made while it waited can only reach the agent through the prompt.
+        let ambition = next.isAppCommand ? nil : designAmbitionStep(sessionID, store: store)
+        let text = ambition?.changePrompt.map { "\($0)\n\n\(next.prompt)" } ?? next.prompt
+        let prompt = Self.prompt(text, with: next.attachments)
         // A failed write means the pipe is gone; the prompt stays queued and starts a
         // fresh process once this turn winds down.
         let sent = turn.connection.map { $0.send(prompt) }
@@ -2498,6 +2532,7 @@ final class SessionRunner {
         records[sessionID]?.queue.removeFirst()
         SessionLog.note("prompt sent into waiting turn", session: sessionID)
 
+        if let ambition { noteDesignAmbition(ambition, sessionID: sessionID, store: store) }
         for message in next.transcriptMessages {
             store.append(message, to: sessionID)
         }

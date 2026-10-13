@@ -722,6 +722,52 @@ struct DesignSessionTests {
         #expect(DesignAmbition.valid("unknown") == nil)
     }
 
+    @Test func anAmbitionChangeIsMarkedAndToldToTheAgentOnce() async throws {
+        let executable = scratch.path("codex-fixture")
+        try FixtureCLI.write("""
+            count=$(ls "$folder" | grep -c '^input-')
+            cat > "$folder/input-$((count + 1))"
+            printf '%s\n' '{"type":"thread.started","thread_id":"thread-1"}'
+            printf '%s\n' '{"type":"item.completed","item":{"id":"answer","item_type":"agent_message","text":"Done"}}'
+            printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":2}}'
+            """, to: executable)
+        let design = store.newSession(in: project.id, seed: .init(agent: .codex, mode: .design))
+        let runner = SessionRunner(persistentAgentSessions: false, paths: [.codex: executable.path])
+        defer { runner.stopAll() }
+
+        func setAmbition(_ ambition: DesignAmbition) {
+            var settings = store.session(design.id)?.settings ?? SessionSettings()
+            settings.designAmbition = ambition.rawValue
+            store.setSettings(settings, for: design.id)
+        }
+        func run(_ prompt: String, turn: Int) async throws -> String {
+            runner.send(prompt, sessionID: design.id, store: store)
+            #expect(await waitUntil {
+                FileManager.default.fileExists(atPath: scratch.path("input-\(turn)").path)
+                    && runner.state(design.id) == .idle
+            })
+            return try String(contentsOf: scratch.path("input-\(turn)"), encoding: .utf8)
+        }
+        let change = DesignAmbition.allOut.changePrompt(from: .balanced)
+
+        setAmbition(.balanced)
+        #expect(try await !run("Draw the screen", turn: 1).contains(change))
+
+        setAmbition(.allOut)
+        #expect(try await run("Add a header", turn: 2).contains(change))
+
+        #expect(try await !run("Tighten the spacing", turn: 3).contains(change))
+
+        let notes = store.transcript(of: design.id).filter { $0.role != .assistant }.map(\.text)
+        #expect(notes == ["Draw the screen",
+                          DesignAmbition.allOut.changeNote(from: .balanced),
+                          "Add a header",
+                          "Tighten the spacing"])
+        #expect(store.save())
+        let restored = ProjectStore(storeURL: store.storeURL)
+        #expect(restored.session(design.id)?.designAmbitionRan == DesignAmbition.allOut.rawValue)
+    }
+
     @Test func implementationReceivesItsReferenceAsAPrivilegedInstruction() throws {
         let reference = URL(fileURLWithPath: "/tmp/approved design")
         let prompt = AgentInstructions.implementationSystemPrompt(referenceURL: reference)

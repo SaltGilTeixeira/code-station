@@ -101,6 +101,9 @@ struct ChatSession: Identifiable, Codable, Equatable, Sendable {
     // Optional so conversations written before the app had either still decode. Both
     // read as "nothing chosen yet" and "nothing spent yet".
     var settings: SessionSettings?
+    // The Design ambition the last Design turn ran with, kept so a change between turns
+    // can be marked in the transcript and told to the agent. Nil until a Design turn runs.
+    var designAmbitionRan: String?
     var usage: SessionUsage?
     // The bot selected for this session. Custom bot filenames stay stable across launches,
     // while the built-in Default bot has a reserved name.
@@ -236,7 +239,7 @@ struct ChatSession: Identifiable, Codable, Equatable, Sendable {
         case handedOffDesignRevisionID, designSourceSessionID
         case claudeSessionID, codexSessionID, copilotSessionID, createdAt
         case worktreePath, worktreeBranch
-        case workspaceID, sessionProjects, settings, usage, agentAvatarName
+        case workspaceID, sessionProjects, settings, designAmbitionRan, usage, agentAvatarName
         // `pullRequest` is only read: a file written when a session could hold one
         // pull request keeps it under that key.
         case pullRequest, pullRequests, taskValues, isScheduledRun, recap, summary, messages
@@ -283,6 +286,7 @@ struct ChatSession: Identifiable, Codable, Equatable, Sendable {
         workspaceID = try container.decodeIfPresent(UUID.self, forKey: .workspaceID)
         sessionProjects = try container.decodeIfPresent([SessionProject].self, forKey: .sessionProjects)
         settings = try container.decodeIfPresent(SessionSettings.self, forKey: .settings)
+        designAmbitionRan = try container.decodeIfPresent(String.self, forKey: .designAmbitionRan)
         usage = try container.decodeIfPresent(SessionUsage.self, forKey: .usage)
         agentAvatarName = try container.decodeIfPresent(String.self, forKey: .agentAvatarName)
         pullRequests = try container.decodeIfPresent([PullRequest].self, forKey: .pullRequests)
@@ -335,6 +339,7 @@ struct ChatSession: Identifiable, Codable, Equatable, Sendable {
         try container.encodeIfPresent(workspaceID, forKey: .workspaceID)
         try container.encodeIfPresent(sessionProjects, forKey: .sessionProjects)
         try container.encodeIfPresent(settings, forKey: .settings)
+        try container.encodeIfPresent(designAmbitionRan, forKey: .designAmbitionRan)
         try container.encodeIfPresent(usage, forKey: .usage)
         try container.encodeIfPresent(agentAvatarName, forKey: .agentAvatarName)
         if !pullRequests.isEmpty {
