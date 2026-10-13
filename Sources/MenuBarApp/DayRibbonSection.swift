@@ -31,8 +31,12 @@ struct DayRibbonSection: View {
     @State private var numberFrame: CGRect = .zero
     @State private var rollSize: CGSize = .zero
 
-    private static let bandHeight: CGFloat = 54
+    private static let bandHeight: CGFloat = 132
     private static let barSpacing: CGFloat = 3
+    // Room above the band for the "now" label, and how far its line rises past the band.
+    private static let markerRoom: CGFloat = 21
+    private static let markerOverhang: CGFloat = 6
+    private static let axisGap: CGFloat = 8
     private static let cardWidth: CGFloat = 290
     nonisolated private static let space = "dayRibbon"
     // Resting on a bar answers almost at once. It is just long enough that a pointer
@@ -220,15 +224,29 @@ struct DayRibbonSection: View {
     // MARK: - Band
 
     private func track(_ moment: Moment) -> some View {
+        VStack(spacing: Self.axisGap) {
+            ZStack(alignment: .bottomTrailing) {
+                band(moment)
+                nowMarker
+            }
+            .frame(height: Self.markerRoom + Self.bandHeight)
+            .opacity(moment.play?.chartOpacity(at: moment.time) ?? 1)
+            axis
+        }
+    }
+
+    private func band(_ moment: Moment) -> some View {
         GeometryReader { geometry in
             let count = max(1, min(64, Int(geometry.size.width / 7)))
             let activity = ribbon.activity(bucketCount: count)
             let peak = max(activity.map(\.spent).max() ?? 0, 1)
+            let rank = ribbon.rank
             let barWidth = (geometry.size.width - Self.barSpacing * Double(count - 1)) / Double(count)
             HStack(alignment: .bottom, spacing: Self.barSpacing) {
                 ForEach(Array(activity.enumerated()), id: \.offset) { index, bucket in
                     let live = scanned && bucket.spent > 0
-                    let face = face(bucket, index: index, of: count, peak: peak, moment: moment)
+                    let face = face(bucket, index: index, of: count, peak: peak,
+                                    rank: rank, moment: moment)
                     if live {
                         let place = BarPlace(index: index, bucket: bucket,
                                              x: Double(index) * (barWidth + Self.barSpacing),
@@ -250,7 +268,6 @@ struct DayRibbonSection: View {
                     }
                 }
             }
-            .opacity(moment.play?.chartOpacity(at: moment.time) ?? 1)
             .allowsHitTesting(moment.play == nil)
             .background(FrameAnchorView(anchor: trackAnchor))
         }
@@ -264,28 +281,63 @@ struct DayRibbonSection: View {
             : "Counting session activity")
     }
 
-    // A bar at rest, or where the entrance has it. Only the height, the opacity and the
-    // colour's mask move, never a transform, since the bar sits inside a menu button.
+    // A bar at rest, or where the entrance has it. Only masks and opacity move, never a
+    // transform, since the bar sits inside a menu button.
     private func face(_ bucket: DayRibbon.Activity, index: Int, of count: Int,
-                      peak: TimeInterval, moment: Moment) -> RibbonBar {
-        let fraction = scanned ? bucket.spent / peak : 0
-        let height = max(4, Self.bandHeight * fraction)
-        let live = scanned && bucket.spent > 0
-        var bar = RibbonBar(bucket: bucket,
-                            height: height,
-                            opacity: live ? 0.55 + fraction * 0.3 : 0.22,
-                            dimmed: peeking && shownBar != index,
-                            stacked: peeking && shownBar == index)
-        guard live, let play = moment.play else { return bar }
-        let risen = play.rise(ofBar: index, of: count, at: moment.time)
-        guard risen > 0 else {
-            bar.height = 4
-            bar.opacity = 0.22
-            return bar
+                      peak: TimeInterval, rank: [String: Int], moment: Moment) -> RibbonBar {
+        guard scanned && bucket.spent > 0 else {
+            return RibbonBar(segments: [], dimmed: false, shown: false)
         }
-        bar.height = 4 + (height - 4) * risen
-        bar.drained = play.drain(ofBar: index, of: count, at: moment.time)
+        var bar = RibbonBar(segments: bucket.segments(height: Self.bandHeight * bucket.spent / peak,
+                                                      rank: rank),
+                            dimmed: peeking && shownBar != index,
+                            shown: peeking && shownBar == index)
+        if let play = moment.play {
+            bar.grown = play.grow(ofBar: index, of: count, at: moment.time)
+            bar.drained = play.drain(ofBar: index, of: count, at: moment.time)
+        }
         return bar
+    }
+
+    // The right edge of the band is now, so the marker stands there above the last bar.
+    private var nowMarker: some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            Text(verbatim: "NOW")
+                .font(.mono(9.5, .semibold))
+                .foregroundStyle(Theme.accent)
+                .fixedSize()
+            Spacer(minLength: 0)
+            Path { path in
+                path.move(to: CGPoint(x: 0.75, y: 0))
+                path.addLine(to: CGPoint(x: 0.75, y: Self.bandHeight + Self.markerOverhang))
+            }
+            .stroke(Theme.accent.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+            .frame(width: 1.5, height: Self.bandHeight + Self.markerOverhang)
+        }
+        .frame(maxHeight: .infinity, alignment: .bottomTrailing)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    // Every three hours along the window, read from the window's own times rather than
+    // from the bars, so the labels stay true at any width.
+    private var axis: some View {
+        HStack(spacing: 0) {
+            ForEach(0..<9, id: \.self) { step in
+                if step > 0 { Spacer(minLength: 4) }
+                Text(verbatim: step == 8 ? "now" : hour(ribbon.axis.start.addingTimeInterval(
+                    Double(step) * 3 * 3_600)))
+                    .font(.mono(10.5))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func hour(_ date: Date) -> String {
+        String(format: "%02d:00", Calendar.current.component(.hour, from: date))
     }
 
     private func activityLabel(_ bucket: DayRibbon.Activity) -> String {
@@ -373,47 +425,84 @@ struct DayRibbonSection: View {
 // MARK: - Bar
 
 private struct RibbonBar: View {
-    let bucket: DayRibbon.Activity
-    var height: CGFloat
-    var opacity: Double
+    // Bottom first. Empty for a slot with nothing to show, which is drawn as a stub.
+    let segments: [DayRibbon.Activity.Segment]
     let dimmed: Bool
-    // While its card is up the bar shows its own project mix, biggest at the bottom.
-    let stacked: Bool
-    // During the entrance the bar rises in its project mix, and the mix then drains away
-    // from the top to show the accent underneath. This is how much has drained so far.
+    // The bar whose card is up shows its project mix in place of the green.
+    let shown: Bool
+    // During the entrance the bar grows up from the baseline in its project mix, and the
+    // mix then drains away from the top to show the green underneath.
+    var grown: Double?
     var drained: Double?
 
-    private var showsAccent: Bool {
-        if let drained { return drained > 0 }
-        return !stacked
+    @Environment(\.colorScheme) private var colorScheme
+
+    private static let radius: CGFloat = 2
+    private static let stubHeight: CGFloat = 3
+
+    private var height: CGFloat {
+        segments.reduce(0) { $0 + $1.height }
+            + DayRibbon.Activity.segmentGap * Double(max(0, segments.count - 1))
     }
 
-    private var showsMix: Bool { drained != nil || stacked }
+    private var segmentOpacity: Double { colorScheme == .dark ? 0.86 : 0.78 }
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3)
-                .fill(Theme.accent.opacity(opacity))
-                .opacity(showsAccent ? 1 : 0)
-            VStack(spacing: 0) {
-                ForEach(bucket.projects.reversed()) { share in
-                    Rectangle()
-                        .fill(share.subject.tint.colour)
-                        .frame(height: height * share.spent / max(bucket.spent, 1))
+            if segments.isEmpty || grown != nil {
+                RoundedRectangle(cornerRadius: Self.radius)
+                    .fill(Theme.field)
+                    .frame(height: Self.stubHeight)
+            }
+            if !segments.isEmpty {
+                bar
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .opacity(dimmed ? 0.35 : 1)
+        .motion(Motion.reveal, value: dimmed)
+        .contentShape(Rectangle())
+    }
+
+    private var bar: some View {
+        let height = height
+        let drained = drained ?? 0
+        return ZStack(alignment: .bottom) {
+            layer { _ in Theme.accent }
+                .mask(alignment: .top) {
+                    Rectangle().frame(height: height * (self.drained == nil ? 1 : drained))
                 }
-            }
-            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 3, topTrailingRadius: 3))
-            .mask(alignment: .bottom) {
-                Rectangle().frame(height: height * (1 - (drained ?? 0)))
-            }
-            .opacity(showsMix ? 1 : 0)
+                .opacity(shown && self.drained == nil ? 0 : 1)
+                .motion(DayRibbonSection.quick, value: shown)
+            layer { $0.subject.tint.colour }
+                .mask(alignment: .bottom) {
+                    Rectangle().frame(height: height * (1 - drained))
+                }
+                .opacity(shown || self.drained != nil ? 1 : 0)
+                .motion(DayRibbonSection.quick, value: shown)
         }
         .frame(height: height)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .opacity(dimmed ? 0.3 : 1)
-        .motion(DayRibbonSection.quick, value: dimmed)
-        .motion(DayRibbonSection.quick, value: stacked)
-        .contentShape(Rectangle())
+        .mask(alignment: .bottom) {
+            Rectangle().frame(height: height * (grown ?? 1))
+        }
+        .background {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Theme.sunken)
+                .padding(.horizontal, -2)
+                .padding(.vertical, -4)
+                .opacity(shown ? 1 : 0)
+                .motion(Motion.reveal, value: shown)
+        }
+    }
+
+    private func layer(_ colour: @escaping (DayRibbon.Activity.Segment) -> Color) -> some View {
+        VStack(spacing: DayRibbon.Activity.segmentGap) {
+            ForEach(segments.reversed()) { segment in
+                RoundedRectangle(cornerRadius: Self.radius)
+                    .fill(colour(segment).opacity(segmentOpacity))
+                    .frame(height: segment.height)
+            }
+        }
     }
 
     // The bar sits inside the menu button, so it learns of the button's focus from the

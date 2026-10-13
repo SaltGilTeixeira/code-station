@@ -128,6 +128,42 @@ struct DayRibbon {
         let projects: [Share]
 
         var id: Date { interval.start }
+
+        // One project's slice of a bar.
+        struct Segment: Identifiable {
+            let subject: RibbonSubject
+            let height: CGFloat
+
+            var id: String { subject.id }
+        }
+
+        static let segmentGap: CGFloat = 1
+        static let minimumSegment: CGFloat = 1.5
+
+        // The bar's projects bottom first, in the day's order rather than the bucket's
+        // own, so a project sits at the same level in every bar it appears in. A slice
+        // too thin to see is left out, and the rest share its room, so the bar still
+        // stands as tall as its time.
+        func segments(height: CGFloat, rank: [String: Int]) -> [Segment] {
+            let ordered = projects.sorted {
+                (rank[$0.subject.name] ?? .max) < (rank[$1.subject.name] ?? .max)
+            }
+            guard let first = ordered.first, spent > 0 else { return [] }
+            let visible = ordered.filter { height * $0.spent / spent >= Self.minimumSegment }
+            let shown = visible.isEmpty ? [first] : visible
+            let room = height - Self.segmentGap * Double(shown.count - 1)
+            let shownSpent = shown.reduce(0) { $0 + $1.spent }
+            return shown.map {
+                Segment(subject: $0.subject,
+                        height: max(Self.minimumSegment, room * $0.spent / shownSpent))
+            }
+        }
+    }
+
+    // Biggest project of the day first. The legend sums the same clipped time the
+    // buckets split up, so its order is the day-wide order every bar stacks in.
+    var rank: [String: Int] {
+        Dictionary(uniqueKeysWithValues: legend.enumerated().map { ($1.subject.name, $0) })
     }
 
     // Equal time buckets preserve gaps and add parallel sessions instead of letting

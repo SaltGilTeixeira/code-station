@@ -48,7 +48,7 @@ struct RibbonEntranceTests {
     @Test func runsForAboutThreeSeconds() {
         let play = RibbonEntrance(total: "17h 49m")
         #expect(play.digits == [1, 7, 4, 9])
-        #expect(abs(play.duration - 2.874) < 0.001)
+        #expect(abs(play.duration - 2.904) < 0.001)
     }
 
     @Test func everyDigitRestsOnItsValueLeftToRight() {
@@ -63,19 +63,37 @@ struct RibbonEntranceTests {
         #expect(play.turn(ofDigit: 3, at: early) < Double(1 * 10 + 9))
     }
 
-    @Test func barsRiseFromTheCentreOutward() {
+    @Test func barsGrowLeftToRightAsTheTotalFlies() {
         let play = RibbonEntrance(total: "2h")
+        #expect(play.grow(ofBar: 0, of: 64, at: play.flightStart) == 0)
         let time = play.flightStart + 0.05
-        let centre = play.rise(ofBar: 31, of: 64, at: time)
-        let edge = play.rise(ofBar: 0, of: 64, at: time)
-        #expect(centre > 0)
-        #expect(edge == 0)
+        #expect(play.grow(ofBar: 0, of: 64, at: time) > 0)
+        #expect(play.grow(ofBar: 31, of: 64, at: time) == 0)
+    }
+
+    // Each bar keeps its colours for a second after it starts to grow, so the drain
+    // follows the grow wave across the chart.
+    @Test func eachBarDrainsASecondAfterItStartsToGrow() {
+        let play = RibbonEntrance(total: "2h")
+        let start = play.flightStart + 1
+        #expect(play.drain(ofBar: 0, of: 64, at: start) < 0.001)
+        #expect(play.drain(ofBar: 0, of: 64, at: start + 0.15) > 0)
+        #expect(play.drain(ofBar: 10, of: 64, at: start + 0.07) == 0)
+        #expect(play.drain(ofBar: 0, of: 64, at: start + 0.3) == 1)
+    }
+
+    // A narrow chart spreads its fewer bars over the same time.
+    @Test func aNarrowChartTakesTheSameTime() {
+        let play = RibbonEntrance(total: "2h")
+        let time = play.flightStart + 0.3
+        #expect(play.grow(ofBar: 16, of: 32, at: time) == play.grow(ofBar: 32, of: 64, at: time))
     }
 
     @Test func endsWithTheChartAtRest() {
         let play = RibbonEntrance(total: "17h 49m")
         let end = play.duration
-        #expect((0..<64).allSatisfy { play.rise(ofBar: $0, of: 64, at: end) == 1 })
+        #expect((0..<64).allSatisfy { play.grow(ofBar: $0, of: 64, at: end) == 1 })
+        #expect((0..<20).allSatisfy { play.drain(ofBar: $0, of: 20, at: end) == 1 })
         #expect((0..<64).allSatisfy { play.drain(ofBar: $0, of: 64, at: end) == 1 })
         #expect(play.chartOpacity(at: end) == 1)
         #expect(play.numberOpacity(at: end) == 1)

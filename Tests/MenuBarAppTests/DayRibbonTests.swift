@@ -292,6 +292,44 @@ struct DayRibbonTests {
         #expect(empty.allSatisfy { $0.spent == 0 && $0.sessions.isEmpty })
     }
 
+    // The bigger project of the day stays at the bottom, even in a bar where the other
+    // one filled more of the time.
+    @Test func stacksEveryBarInTheDaysOrder() {
+        let big = session(project: "Big")
+        let small = session(project: "Small")
+        let ribbon = DayRibbon.build([big, small], spans: { id in
+            id == big.id
+                ? [TimeSpan(start: at(8, 0), end: at(8, 45)), TimeSpan(start: at(10, 0), end: at(10, 15))]
+                : [TimeSpan(start: at(10, 0), end: at(10, 45))]
+        }, now: at(24))
+
+        let bucket = ribbon.activity(bucketCount: 24)[10]
+        #expect(bucket.projects.map(\.subject.name) == ["Small", "Big"])
+
+        let segments = bucket.segments(height: 60, rank: ribbon.rank)
+        #expect(segments.map(\.subject.name) == ["Big", "Small"])
+        #expect(segments.map(\.height) == [14.75, 44.25])
+        let drawn = segments.reduce(0) { $0 + $1.height } + DayRibbon.Activity.segmentGap
+        #expect(drawn == 60)
+    }
+
+    @Test func leavesASliverOutOfTheBarButKeepsItsHeight() {
+        let big = session(project: "Big")
+        let tiny = session(project: "Tiny")
+        let ribbon = DayRibbon.build([big, tiny], spans: { id in
+            id == big.id
+                ? [TimeSpan(start: at(10, 0), end: at(11, 0))]
+                : [TimeSpan(start: at(10, 0), end: at(10, 1))]
+        }, now: at(24))
+
+        let bucket = ribbon.activity(bucketCount: 24)[10]
+        let segments = bucket.segments(height: 30, rank: ribbon.rank)
+        #expect(segments.map(\.subject.name) == ["Big"])
+        #expect(segments.first?.height == 30)
+        #expect(bucket.projects.count == 2)
+        #expect(ribbon.activity(bucketCount: 24)[11].segments(height: 30, rank: ribbon.rank).isEmpty)
+    }
+
     @Test func readsDurationsInHoursAndMinutes() {
         #expect(DayRibbon.duration(0) == "0m")
         #expect(DayRibbon.duration(20) == "1m")

@@ -1,9 +1,10 @@
 import Foundation
 
 // The entrance the day ribbon plays each time Home opens on a full day.
-// The total rolls up over the dimmed chart and flies into the headline. Under it the
-// bars rise from the centre in their project colours, hold a beat, then drain from the
-// top into the accent green, which is how the chart looks at rest.
+// The total rolls up over the dimmed chart and flies into the headline. As it flies the
+// bars grow up from the baseline in their project colours, left to right, and a second
+// later each one drains from the top into the accent green, which is how the chart looks
+// at rest.
 //
 // Every value is a pure function of the time since the start, so one clock can drive
 // the whole thing and a skip is only a jump to the end.
@@ -27,11 +28,11 @@ struct RibbonEntrance {
     private static let digitStagger: TimeInterval = 0.07
     private static let flightDelay: TimeInterval = 0.14
     private static let flight: TimeInterval = 0.52
-    private static let rise: TimeInterval = 0.52
-    private static let riseStagger: TimeInterval = 0.008
-    private static let hold: TimeInterval = 0.25
+    private static let grow: TimeInterval = 0.6
+    private static let growStagger: TimeInterval = 0.008
+    // How long a bar shows its project colours, from the moment it starts to grow.
+    private static let hold: TimeInterval = 1
     private static let drain: TimeInterval = 0.3
-    private static let drainStagger: TimeInterval = 0.007
 
     init(total: String) {
         self.total = total
@@ -50,14 +51,15 @@ struct RibbonEntrance {
         Self.roll + Double(max(0, digits.count - 1)) * Self.digitStagger + Self.flightDelay
     }
 
-    private var riseStart: TimeInterval { flightStart }
-
-    private var drainStart: TimeInterval {
-        riseStart + Double(Self.slots / 2) * Self.riseStagger + Self.rise + Self.hold
+    // The bars grow left to right as the total takes off. The stagger is spread over the
+    // full set of slots, so a narrow chart takes the same time.
+    private func growStart(ofBar index: Int, of count: Int) -> TimeInterval {
+        let scale = Double(Self.slots) / Double(max(count, 1))
+        return flightStart + Double(index) * scale * Self.growStagger
     }
 
     var duration: TimeInterval {
-        drainStart + Double(Self.slots) * Self.drainStagger + Self.drain
+        flightStart + Double(Self.slots - 1) * Self.growStagger + Self.hold + Self.drain
     }
 
     // How far a digit's strip has turned, in digits. Each column spins one turn more than
@@ -92,30 +94,20 @@ struct RibbonEntrance {
         1 - 0.55 * (1 - Self.clamp((time - flightStart) / 0.3)) * Self.clamp(time / 0.2)
     }
 
-    // How far a bar has risen. The spring overshoots a little past one before it settles.
-    func rise(ofBar index: Int, of count: Int, at time: TimeInterval) -> Double {
-        let fromCentre = abs(Double(index) - Double(count - 1) / 2)
-        // Spread over the full set of slots, so a narrow chart takes the same time.
-        let scale = Double(Self.slots) / Double(max(count, 1))
-        return Self.spring((time - riseStart - fromCentre * scale * Self.riseStagger) / Self.rise)
+    // How far a bar has grown up from the baseline.
+    func grow(ofBar index: Int, of count: Int, at time: TimeInterval) -> Double {
+        Self.easeOutQuart((time - growStart(ofBar: index, of: count)) / Self.grow)
     }
 
     // How much of a bar's project colour has drained away from the top.
     func drain(ofBar index: Int, of count: Int, at time: TimeInterval) -> Double {
-        let scale = Double(Self.slots) / Double(max(count, 1))
-        return Self.easeInOutCubic(
-            (time - drainStart - Double(index) * scale * Self.drainStagger) / Self.drain)
+        Self.easeInOutCubic(
+            (time - growStart(ofBar: index, of: count) - Self.hold) / Self.drain)
     }
 
     // MARK: - Curves
 
     private static func clamp(_ value: Double) -> Double { max(0, min(1, value)) }
-
-    private static func spring(_ x: Double) -> Double {
-        if x <= 0 { return 0 }
-        if x >= 1 { return 1 }
-        return 1 - exp(-6.5 * x) * cos(10.5 * x)
-    }
 
     private static func easeOutQuart(_ x: Double) -> Double {
         1 - pow(1 - clamp(x), 4)
