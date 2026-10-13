@@ -278,6 +278,20 @@ struct OrbitLayout {
         return CGPoint(x: min(max(x, half + 10), size.width - half - 10),
                        y: max(min(top, lowest - card.height), highest) + card.height / 2)
     }
+
+    // The session arc under a point in the hub, where the hub is a square of `hubSide`. It
+    // goes by the point's angle and distance from the middle, since every arc's view
+    // covers the whole square and a hover over that square would light them all.
+    func arc(at point: CGPoint) -> Arc? {
+        let dx = point.x - Self.hubSide / 2
+        let dy = point.y - Self.hubSide / 2
+        let reach = (Self.ringWidth + 6) / 2
+        guard abs(hypot(dx, dy) - Self.ringRadius) <= reach else { return nil }
+        // A fraction of a turn, clockwise from the top, as the arcs are laid out.
+        var turn = (atan2(dy, dx) + .pi / 2) / (2 * .pi)
+        if turn < 0 { turn += 1 }
+        return arcs.first { $0.start <= turn && turn < $0.end }
+    }
 }
 
 // When each part of the orbit arrives as it builds itself up, in seconds from the start:

@@ -13,6 +13,7 @@ struct OrbitRing: View {
     let point: (OrbitSpotlight, Bool) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pointedArc: OrbitSpotlight?
 
     private static let side = OrbitLayout.hubSide
 
@@ -50,7 +51,7 @@ struct OrbitRing: View {
                         entrance: reduceMotion ? nil : OrbitOpening.draw.delay(opening.arc(arc.step)),
                         hot: spotlight == spot) {
                     select(live.id)
-                } point: { point(spot, $0) }
+                }
                     .frame(width: ring, height: ring)
                     .opacity(OrbitSpotlight.opacity(spotlight, group: live.containerID, session: live.id))
             }
@@ -73,6 +74,16 @@ struct OrbitRing: View {
             .accessibilityLabel(summary)
         }
         .frame(width: Self.side, height: Self.side)
+        .onContinuousHover { phase in
+            var now: OrbitSpotlight?
+            if case .active(let location) = phase, let arc = layout.arc(at: location) {
+                now = .session(arc.id, group: arc.live.containerID)
+            }
+            guard now != pointedArc else { return }
+            if let pointedArc { point(pointedArc, false) }
+            if let now { point(now, true) }
+            pointedArc = now
+        }
     }
 
     // Dashes moving round the arc of every running session, lit and dimmed with it.
@@ -129,7 +140,6 @@ private struct RingArc: View {
     let entrance: Animation?
     let hot: Bool
     let select: () -> Void
-    let point: (Bool) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var flares = 0
@@ -155,7 +165,6 @@ private struct RingArc: View {
         .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: hot)
         .contentShape(shape.stroke(lineWidth: OrbitLayout.ringWidth + 6))
         .onTapGesture(perform: select)
-        .onHover(perform: point)
         .onChange(of: arc.live.needsAttention) { _, now in
             if now && !reduceMotion { flares += 1 }
         }

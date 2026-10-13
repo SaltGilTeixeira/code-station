@@ -205,6 +205,29 @@ struct HomeWorkMapTests {
         #expect(layout.arcs.count == 5)
     }
 
+    // Every arc's view covers the whole hub, so the arc under the pointer is found from
+    // where on the ring the pointer is, not from which view it is over.
+    @Test func orbitFindsTheArcUnderThePointer() throws {
+        let layout = OrbitLayout(map: HomeWorkMap(sessions: day([1, 1, 1])), width: 1100)
+        #expect(layout.arcs.count == 3)
+        let middle = OrbitLayout.hubSide / 2
+        let radius = OrbitLayout.ringRadius
+        func onRing(degreesFromTop degrees: Double) -> CGPoint {
+            let angle = (degrees - 90) * .pi / 180
+            return CGPoint(x: middle + radius * cos(angle), y: middle + radius * sin(angle))
+        }
+
+        for degrees in [10.0, 90, 170, 190, 225, 270, 350] {
+            let arc = try #require(layout.arc(at: onRing(degreesFromTop: degrees)))
+            let turn = degrees / 360
+            #expect(arc.start <= turn && turn < arc.end)
+            #expect(arc.left == (degrees > 180))
+        }
+        #expect(layout.arc(at: CGPoint(x: middle, y: middle)) == nil)
+        #expect(layout.arc(at: CGPoint(x: middle - radius * 0.5, y: middle + radius * 0.5)) == nil)
+        #expect(layout.arc(at: .zero) == nil)
+    }
+
     @Test func orbitShowsTwoPerProjectOnABusyDay() {
         let sessions = day([4, 3, 3, 2, 2, 2, 1]) + [live(workspace: UUID(), name: "Workspace")]
         #expect(sessions.count == 18)
