@@ -71,13 +71,39 @@ class LoopLayerView: NSView {
         LayerLoop.still { layoutLayers() }
     }
 
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        NotificationCenter.default.removeObserver(
+            self, name: NSWindow.didChangeOcclusionStateNotification, object: window)
+    }
+
     // A layer can lose its animations while it is out of a window, so they are added
     // again each time the view comes back. The media clock keeps them on the beat.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil else { return }
+        guard let window else { return }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(occlusionChanged),
+            name: NSWindow.didChangeOcclusionStateNotification, object: window)
         LayerLoop.still { syncScale() }
+        syncPause()
         restartLoops()
+    }
+
+    // The render server keeps drawing a loop in a window nobody can see, which costs the
+    // whole machine for nothing. A layer at speed zero holds still and is not redrawn.
+    // Its loops are added again when it shows, so they rejoin the beat of the media clock.
+    @objc private func occlusionChanged() {
+        let wasPaused = isPaused
+        syncPause()
+        if wasPaused && !isPaused { restartLoops() }
+    }
+
+    var isPaused: Bool { layer?.speed == 0 }
+
+    private func syncPause() {
+        let visible = window?.occlusionState.contains(.visible) ?? false
+        LayerLoop.still { layer?.speed = visible ? 1 : 0 }
     }
 
     override func viewDidChangeBackingProperties() {
