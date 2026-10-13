@@ -235,35 +235,41 @@ struct HomeWorkMapView: View {
     }
 
     // The same ring the orbit is drawn around, empty, so a quiet day still reads as the map.
+    // It is drawn smaller than the orbit's hub, since there is nothing around it to balance.
+    private static let quietScale: CGFloat = 0.7
+
     private var quiet: some View {
-        VStack(spacing: 18) {
+        let scale = Self.quietScale
+        return VStack(spacing: 12) {
             ZStack {
                 Circle()
                     .stroke(Theme.border, style: StrokeStyle(lineWidth: 1, dash: [2, 4]))
-                    .frame(width: 2 * OrbitLayout.orbitRadius, height: 2 * OrbitLayout.orbitRadius)
+                    .frame(width: 2 * OrbitLayout.orbitRadius * scale,
+                           height: 2 * OrbitLayout.orbitRadius * scale)
                 Circle()
-                    .stroke(Theme.hairline, lineWidth: OrbitLayout.ringWidth)
-                    .frame(width: 2 * OrbitLayout.ringRadius, height: 2 * OrbitLayout.ringRadius)
+                    .stroke(Theme.hairline, lineWidth: OrbitLayout.ringWidth * scale)
+                    .frame(width: 2 * OrbitLayout.ringRadius * scale,
+                           height: 2 * OrbitLayout.ringRadius * scale)
                 Circle()
                     .stroke(Theme.border, style: StrokeStyle(lineWidth: 1.5, dash: [3, 4]))
-                    .frame(width: 2 * OrbitLayout.projectRingRadius,
-                           height: 2 * OrbitLayout.projectRingRadius)
-                VStack(spacing: 4) {
+                    .frame(width: 2 * OrbitLayout.projectRingRadius * scale,
+                           height: 2 * OrbitLayout.projectRingRadius * scale)
+                VStack(spacing: 2) {
                     Text("0")
-                        .font(.serif(50, .medium))
+                        .font(.serif(36, .medium))
                         .foregroundStyle(.tertiary)
                     Text("working")
-                        .font(.system(size: 11.5))
+                        .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                 }
             }
-            .frame(width: OrbitLayout.hubSide, height: OrbitLayout.hubSide)
+            .frame(width: OrbitLayout.hubSide * scale, height: OrbitLayout.hubSide * scale)
             .accessibilityHidden(true)
 
-            VStack(spacing: 5) {
-                Text("Room for your next idea").font(.serif(17, .semibold))
+            VStack(spacing: 4) {
+                Text("Room for your next idea").font(.serif(15, .semibold))
                 Text("Nothing is running.")
-                    .font(.system(size: 12.5))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
@@ -271,7 +277,6 @@ struct HomeWorkMapView: View {
             .accessibilityElement(children: .combine)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 6)
     }
 }
 
