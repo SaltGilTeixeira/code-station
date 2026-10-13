@@ -81,6 +81,11 @@ enum Theme {
     // needs a colour of its own.
     static let brand = Color(red: 0.867, green: 0.878, blue: 0.282)
 
+    static let botStage = Color(red: 0.075, green: 0.463, blue: 0.459)
+    static let botSelection = adaptive(
+        light: NSColor(srgbRed: 0.898, green: 0.922, blue: 0.855, alpha: 1),
+        dark: NSColor(srgbRed: 0.188, green: 0.243, blue: 0.161, alpha: 1))
+
     // Leaf, one of the colours a person's own messages can wear (see MessageColour). It
     // is the brand yellow taken most of the way to a leaf green.
     static let userMessage = adaptive(

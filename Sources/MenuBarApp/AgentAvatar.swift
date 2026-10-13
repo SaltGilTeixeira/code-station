@@ -6,7 +6,9 @@ struct AgentAvatar: Identifiable {
     let url: URL
     let image: NSImage
     let personality: AgentPersonality
-    let usesStockArtwork: Bool
+    let picture: BotPicture
+
+    var usesStockArtwork: Bool { picture == .automatic }
 
     var id: URL { url }
 
@@ -49,7 +51,7 @@ enum AgentAvatarSelection {
             url: URL(fileURLWithPath: "/.code-station/bots/\(defaultName)"),
             image: AgentAvatarArt.image(for: .standard),
             personality: .standard,
-            usesStockArtwork: true)
+            picture: .automatic)
     }
 }
 
@@ -62,14 +64,13 @@ enum AgentAvatarFile {
     }
 
     static func loadAll(from baseURL: URL) -> [AgentAvatar] {
-        let personalities = loadPersonalities(from: baseURL)
+        let records = (try? loadRecords(from: baseURL)) ?? [:]
         return avatarURLs(for: baseURL).compactMap { url in
-            load(from: url).map {
-                AgentAvatar(url: url,
-                            image: $0,
-                            personality: personalities[url.lastPathComponent] ?? .standard,
-                            usesStockArtwork: AgentAvatarArt.isStock(at: url))
-            }
+            guard let image = load(from: url) else { return nil }
+            let record = records[url.lastPathComponent]
+            return AgentAvatar(url: url, image: image,
+                               personality: record?.personality ?? .standard,
+                               picture: record?.picture ?? legacyPicture(at: url))
         }
     }
 
@@ -77,27 +78,27 @@ enum AgentAvatarFile {
                              to baseURL: URL,
                              personality: AgentPersonality = .standard) throws -> [AgentAvatar] {
         let prepared = try sourceURLs.map { try prepareImage(from: $0) }
-        guard !prepared.isEmpty else { return [] }
-        return try store(prepared, to: baseURL, personality: personality)
+        return try store(prepared, to: baseURL, personality: personality, picture: .photo)
     }
 
     private static func store(_ prepared: [(data: Data, image: NSImage)],
                               to baseURL: URL,
-                              personality: AgentPersonality) throws -> [AgentAvatar] {
+                              personality: AgentPersonality,
+                              picture: BotPicture) throws -> [AgentAvatar] {
+        guard !prepared.isEmpty else { return [] }
         let existing = avatarURLs(for: baseURL)
         guard existing.count + prepared.count <= maxCount else {
             throw AgentAvatarError.tooManyAvatars
         }
-
-        let nextIndex = (existing.compactMap {
+        var records = try loadRecords(from: baseURL)
+        // Removed names stay reserved because saved sessions still refer to them.
+        let reserved = records.keys.map { baseURL.deletingLastPathComponent().appendingPathComponent($0) }
+        let nextIndex = ((existing + reserved).compactMap {
             avatarIndex(for: $0, baseURL: baseURL)
         }.max() ?? 0) + 1
-        let destinations = prepared.indices.map {
-            avatarURL(index: nextIndex + $0, baseURL: baseURL)
-        }
-        var personalities = loadPersonalities(from: baseURL)
+        let destinations = prepared.indices.map { avatarURL(index: nextIndex + $0, baseURL: baseURL) }
         for destination in destinations {
-            personalities[destination.lastPathComponent] = personality
+            records[destination.lastPathComponent] = Record(personality: personality, picture: picture)
         }
 
         var written: [URL] = []
@@ -106,59 +107,76 @@ enum AgentAvatarFile {
                 try PersistentFile.write(item.data, to: destination)
                 written.append(destination)
             }
-            try savePersonalities(personalities, for: baseURL)
+            try saveRecords(records, for: baseURL)
         } catch {
-            for url in written {
-                try? PersistentFile.removeIfPresent(url)
-            }
+            for url in written { try? PersistentFile.removeIfPresent(url) }
             throw error
         }
-
         return zip(destinations, prepared).map {
-            AgentAvatar(url: $0.0, image: $0.1.image, personality: personality,
-                        usesStockArtwork: AgentAvatarArt.isStock(data: $0.1.data))
+            AgentAvatar(url: $0.0, image: $0.1.image, personality: personality, picture: picture)
         }
     }
 
     static func addStockPicture(personality: AgentPersonality,
                                 to baseURL: URL) throws -> [AgentAvatar] {
-        let data = try AgentAvatarArt.pngData(for: personality)
-        guard let image = NSImage(data: data) else {
-            throw AgentAvatarError.couldNotReadImage
+        [try save(personality: personality, picture: .automatic, photoData: nil, to: baseURL)]
+    }
+
+    static func save(personality: AgentPersonality, picture: BotPicture, photoData: Data?,
+                     replacing avatar: AgentAvatar? = nil, to baseURL: URL) throws -> AgentAvatar {
+        let data: Data
+        switch picture {
+        case .automatic: data = try AgentAvatarArt.pngData(for: personality)
+        case .character(let index): data = try AgentAvatarArt.pngData(character: index)
+        case .photo:
+            guard let photoData else { throw AgentAvatarError.couldNotReadImage }
+            data = photoData
         }
-        return try store([(data, image)], to: baseURL, personality: personality)
+        guard let image = NSImage(data: data) else { throw AgentAvatarError.couldNotReadImage }
+        guard let avatar else {
+            return try store([(data, image)], to: baseURL,
+                             personality: personality, picture: picture)[0]
+        }
+        guard avatarURLs(for: baseURL).contains(where: { $0.standardizedFileURL == avatar.url.standardizedFileURL }) else {
+            throw AgentAvatarError.missingBot
+        }
+        var records = try loadRecords(from: baseURL)
+        records[avatar.url.lastPathComponent] = Record(personality: personality, picture: picture)
+        let original = try Data(contentsOf: avatar.url)
+        try PersistentFile.write(data, to: avatar.url)
+        do {
+            try saveRecords(records, for: baseURL)
+        } catch {
+            try PersistentFile.write(original, to: avatar.url)
+            throw error
+        }
+        return AgentAvatar(url: avatar.url, image: image, personality: personality, picture: picture)
     }
 
     static func setPersonality(_ personality: AgentPersonality,
                                for avatar: AgentAvatar,
                                baseURL: URL) throws -> AgentAvatar {
-        // Ours is the personality made visible; a photo is the user's and stays.
-        var picture = avatar.image
-        if avatar.usesStockArtwork {
-            let data = try AgentAvatarArt.pngData(for: personality)
-            try PersistentFile.write(data, to: avatar.url)
-            picture = NSImage(data: data) ?? picture
-        }
-
-        var personalities = loadPersonalities(from: baseURL)
-        personalities[avatar.url.lastPathComponent] = personality
-        try savePersonalities(personalities, for: baseURL)
-        return AgentAvatar(url: avatar.url, image: picture, personality: personality,
-                           usesStockArtwork: avatar.usesStockArtwork)
+        try save(personality: personality, picture: avatar.picture,
+                 photoData: avatar.picture == .photo ? Data(contentsOf: avatar.url) : nil,
+                 replacing: avatar, to: baseURL)
     }
 
     static func remove(at url: URL, from baseURL: URL) throws {
+        guard avatarURLs(for: baseURL).contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) else { return }
+        var records = try loadRecords(from: baseURL)
+        if records[url.lastPathComponent] == nil {
+            records[url.lastPathComponent] = Record(personality: .standard, picture: legacyPicture(at: url))
+        }
+        try saveRecords(records, for: baseURL)
         try PersistentFile.removeIfPresent(url)
-        var personalities = loadPersonalities(from: baseURL)
-        personalities[url.lastPathComponent] = nil
-        try savePersonalities(personalities, for: baseURL)
     }
 
     static func removeAll(from baseURL: URL) throws {
-        for url in avatarURLs(for: baseURL) {
-            try PersistentFile.removeIfPresent(url)
-        }
-        try PersistentFile.removeIfPresent(personalityURL(for: baseURL))
+        for url in avatarURLs(for: baseURL) { try remove(at: url, from: baseURL) }
+    }
+
+    private static func legacyPicture(at url: URL) -> BotPicture {
+        AgentAvatarArt.isStock(at: url) ? .automatic : .photo
     }
 
     private static func prepareImage(from sourceURL: URL) throws -> (data: Data, image: NSImage) {
@@ -220,24 +238,36 @@ enum AgentAvatarFile {
         return baseURL.deletingLastPathComponent().appendingPathComponent(filename)
     }
 
-    private static func loadPersonalities(from baseURL: URL) -> [String: AgentPersonality] {
-        guard let data = try? Data(contentsOf: personalityURL(for: baseURL)),
-              let stored = try? JSONDecoder().decode([String: String].self, from: data) else {
-            return [:]
+    private struct Record: Codable {
+        let personality: AgentPersonality
+        let picture: BotPicture?
+
+        init(personality: AgentPersonality, picture: BotPicture?) {
+            self.personality = personality
+            self.picture = picture
         }
-        // Entries saved by builds with personalities that no longer exist fall back
-        // to the default instead of discarding everyone's assignments.
-        return stored.compactMapValues(AgentPersonality.init(rawValue:))
+
+        private enum CodingKeys: String, CodingKey { case personality, picture }
+
+        init(from decoder: Decoder) throws {
+            if let legacy = try? decoder.singleValueContainer().decode(String.self) {
+                personality = AgentPersonality(rawValue: legacy) ?? .standard
+                picture = nil
+            } else {
+                let values = try decoder.container(keyedBy: CodingKeys.self)
+                let name = try values.decode(String.self, forKey: .personality)
+                personality = AgentPersonality(rawValue: name) ?? .standard
+                picture = try values.decodeIfPresent(BotPicture.self, forKey: .picture)
+            }
+        }
     }
 
-    private static func savePersonalities(_ personalities: [String: AgentPersonality],
-                                          for baseURL: URL) throws {
-        let url = personalityURL(for: baseURL)
-        guard !personalities.isEmpty else {
-            try PersistentFile.removeIfPresent(url)
-            return
-        }
-        try PersistentFile.write(JSONEncoder().encode(personalities), to: url)
+    private static func loadRecords(from baseURL: URL) throws -> [String: Record] {
+        try PersistentFile.loadJSON([String: Record].self, from: personalityURL(for: baseURL)) ?? [:]
+    }
+
+    private static func saveRecords(_ records: [String: Record], for baseURL: URL) throws {
+        try PersistentFile.saveJSON(records, to: personalityURL(for: baseURL))
     }
 
     private static func personalityURL(for baseURL: URL) -> URL {
@@ -251,6 +281,28 @@ enum AgentAvatarFile {
 // chosen from the session id wherever the active session shows the bot.
 enum AgentAvatarArt {
     static let sessionArtworkCount = 64
+    static let gallery = [16, 1, 7, 13, 5, 10, 22, 12, 44, 9, 18, 23]
+
+    static func suggestedCharacter(for personality: AgentPersonality) -> Int {
+        personalityArtwork[personality] ?? 16
+    }
+
+    static func pngData(character index: Int) throws -> Data {
+        guard gallery.contains(index), let data = sessionPictures[index] else {
+            throw AgentAvatarError.missingArtwork
+        }
+        return data
+    }
+
+    @MainActor
+    static func image(character index: Int) -> NSImage {
+        galleryImages[index] ?? image(for: .standard)
+    }
+
+    @MainActor private static let galleryImages: [Int: NSImage] = Dictionary(
+        uniqueKeysWithValues: gallery.compactMap { index in
+            sessionPictures[index].flatMap(NSImage.init(data:)).map { (index, $0) }
+        })
 
     private static let personalityArtwork: [AgentPersonality: Int] = [
         .standard: 16,
@@ -344,6 +396,7 @@ enum AgentAvatarError: LocalizedError {
     case couldNotEncodeImage
     case missingArtwork
     case tooManyAvatars
+    case missingBot
 
     var errorDescription: String? {
         switch self {
@@ -353,8 +406,10 @@ enum AgentAvatarError: LocalizedError {
             "The selected image could not be prepared for use."
         case .missingArtwork:
             "The picture for this personality is missing from the app."
+        case .missingBot:
+            "This bot is no longer available. Return to Your bots and add a new one."
         case .tooManyAvatars:
-            "The app supports up to \(AgentAvatarFile.maxCount) bots. Remove one to add another."
+            "The app supports up to \(AgentAvatarFile.maxCount) custom bots. Remove one to add another."
         }
     }
 }

@@ -1,6 +1,5 @@
 import ServiceManagement
 import SwiftUI
-import UniformTypeIdentifiers
 
 // Whether macOS launches the app when the user logs in. The system owns this state, so
 // it is read back from the service rather than stored by us.
@@ -266,6 +265,22 @@ final class AppSettings {
         agentAvatars[index] = updated
     }
 
+    func saveBot(_ draft: BotDraft) throws {
+        let saved = try AgentAvatarFile.save(personality: draft.personality, picture: draft.picture,
+                                             photoData: draft.photoData, replacing: draft.avatar,
+                                             to: agentAvatarURL)
+        if let index = agentAvatars.firstIndex(where: { $0.id == saved.id }) {
+            agentAvatars[index] = saved
+        } else {
+            agentAvatars.append(saved)
+        }
+        if draft.isDefault {
+            setDefaultAgentAvatarName(saved.url.lastPathComponent)
+        } else if defaultAgentAvatarName == saved.url.lastPathComponent {
+            setDefaultAgentAvatarName(AgentAvatarSelection.defaultName)
+        }
+    }
+
     func removeAgentAvatar(_ avatar: AgentAvatar) throws {
         defer { reloadAgentAvatars() }
         try AgentAvatarFile.remove(at: avatar.url, from: agentAvatarURL)
@@ -317,8 +332,10 @@ struct SettingsView: View {
     @State private var searchTarget: SettingsSearchTarget?
     @State private var searchResultID: String?
     @State private var searchedAgent: AgentKind?
-    @State private var botDraft = BotDraft()
-    @State private var hoveredBot: AgentAvatar.ID?
+    @State private var bots = BotSettingsFlow()
+    @State private var appearanceBeforeReset: (
+        appearance: Appearance, textSize: TextSize, messageColour: MessageColour,
+        iconStyle: DiceBearAvatarStyle, iconSet: SidebarIconSet, workingSet: Bool)?
     @FocusState private var searchFocused: Bool
     // Ties the seat under the chosen pane to whichever row holds it, so picking another
     // pane slides the same shape down the list instead of redrawing it there.
@@ -330,33 +347,40 @@ struct SettingsView: View {
             header
             HStack(spacing: 0) {
                 navigation
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
-                            paneHeading
-                            tabContent
-                        }
-                        .padding(24)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .transition(.fadeIn)
+                if tab == .appearance && bots.isPresented {
+                    BotSettingsView(flow: bots) {
+                        navigate(to: .appearance)
                     }
-                    .scrollIndicators(.visible)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Theme.background)
-                    .id(tab)
-                    .onChange(of: searchTarget) { _, target in
-                        guard let target else { return }
-                        Task { @MainActor in
-                            await Task.yield()
-                            proxy.scrollTo(target.id, anchor: .top)
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 18) {
+                                paneHeading
+                                tabContent
+                            }
+                            .padding(24)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .transition(.fadeIn)
+                        }
+                        .scrollIndicators(.visible)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Theme.background)
+                        .id(tab)
+                        .onChange(of: searchTarget) { _, target in
+                            guard let target else { return }
+                            Task { @MainActor in
+                                await Task.yield()
+                                proxy.scrollTo(target.id, anchor: .top)
+                            }
                         }
                     }
                 }
             }
-            settingsFooter
+            if bots.draft == nil { settingsFooter }
         }
         .frame(width: 960, height: 680)
         .background(Theme.background)
+        .interactiveDismissDisabled(bots.draft?.isDirty == true)
         .onAppear { loginItem.refresh() }
         .sheet(isPresented: $reviewingOldSessions) {
             OldSessionsView(sessions: OldSessions.reviewable(days: settings.oldSessionDays,
@@ -431,9 +455,28 @@ struct SettingsView: View {
                             symbol: choice.symbol,
                             selected: tab == choice,
                             seat: paneSeat) {
-                                show { tab = choice }
-                                searchTarget = nil
+                                navigate(to: choice)
                             }
+                        if choice == .appearance {
+                            Button {
+                                bots.leave(using: dialogs) {
+                                    show { tab = .appearance; bots.isPresented = true }
+                                    searchTarget = nil
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Circle().fill(Theme.accent).frame(width: 5, height: 5)
+                                    Text("Your bots").font(.system(size: 12, weight: .medium))
+                                    Spacer()
+                                }
+                                .foregroundStyle(tab == .appearance && bots.isPresented ? Theme.accent : .secondary)
+                                .padding(.leading, 40)
+                                .frame(height: 28)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityValue(tab == .appearance && bots.isPresented ? "Selected" : "Not selected")
+                        }
                     }
                 }
             } else if searchResults.isEmpty {
@@ -490,16 +533,45 @@ struct SettingsView: View {
     }
 
     private func select(_ result: SettingsSearchResult) {
-        show { tab = result.tab }
-        searchTarget = result.target
-        searchResultID = result.id
-        searchedAgent = result.agent
+        bots.leave(using: dialogs) {
+            show {
+                tab = result.tab
+                bots.isPresented = result.target == .appearanceDefaultBot
+            }
+            searchTarget = result.target
+            searchResultID = result.id
+            searchedAgent = result.agent
+        }
+    }
+
+    private func navigate(to destination: SettingsTab) {
+        bots.leave(using: dialogs) {
+            show { tab = destination; bots.isPresented = false }
+            searchTarget = nil
+        }
+    }
+
+    private func resetAppearance() {
+        appearanceBeforeReset = (settings.appearance, settings.textSize, settings.messageColour,
+                                 settings.diceBearAvatarStyle, settings.sidebarIconSet, settings.opensWorkingSetByDefault)
+        settings.resetAppearance()
+    }
+
+    private func undoAppearanceReset() {
+        guard let previous = appearanceBeforeReset else { return }
+        settings.appearance = previous.appearance
+        settings.textSize = previous.textSize
+        settings.messageColour = previous.messageColour
+        settings.diceBearAvatarStyle = previous.iconStyle
+        settings.sidebarIconSet = previous.iconSet
+        settings.opensWorkingSetByDefault = previous.workingSet
+        appearanceBeforeReset = nil
     }
 
     private var paneHeading: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(tab.title)
-                .font(.serif(26))
+                .font(tab == .appearance ? .logo(26) : .serif(26))
             Text(tab.note)
                 .font(.system(size: 12.5))
                 .foregroundStyle(.secondary)
@@ -509,7 +581,7 @@ struct SettingsView: View {
     }
 
     private var settingsFooter: some View {
-        SheetFooter(dismiss: { dismiss() }) {
+        SheetFooter(dismiss: { bots.leave(using: dialogs) { dismiss() } }) {
             Circle()
                 .fill(Theme.dotOn)
                 .frame(width: 7, height: 7)
@@ -520,9 +592,10 @@ struct SettingsView: View {
             Text("Changes save automatically")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
-            if tab == .appearance {
-                InlineLink(title: "Reset Appearance", action: settings.resetAppearance)
+            if tab == .appearance && !bots.isPresented {
+                InlineLink(title: "Reset Appearance", action: resetAppearance)
                     .padding(.leading, 6)
+                if appearanceBeforeReset != nil { InlineLink(title: "Undo reset", action: undoAppearanceReset) }
             }
         }
     }
@@ -546,7 +619,10 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 20) {
                 appearance.id(SettingsSearchTarget.appearanceTheme.id)
                 workingSet.id(SettingsSearchTarget.appearanceWorkingSet.id)
-                personalisation
+                BotSettingsEntry {
+                    show { bots.isPresented = true }
+                }
+                .id(SettingsSearchTarget.appearanceDefaultBot.id)
             }
             .transition(.fadeIn)
         case .keyboard:
@@ -827,7 +903,7 @@ struct SettingsView: View {
     }
 
     private var appearance: some View {
-        ChoiceBlock("THEME") {
+        ChoiceBlock("APPEARANCE") {
             SettingsCard {
                 HStack(alignment: .center, spacing: 20) {
                     settingCopy(
@@ -858,6 +934,10 @@ struct SettingsView: View {
 
                     Spacer(minLength: 0)
 
+                    Text("Aa")
+                        .font(.serif(22 * settings.textSize.scale, .regular))
+                        .frame(width: 36)
+                        .accessibilityLabel("Text size preview: \(settings.textSize.label)")
                     HStack(spacing: 4) {
                         ForEach(TextSize.allCases) { size in
                             ChoicePill(title: size.label, selected: settings.textSize == size) {
@@ -872,19 +952,24 @@ struct SettingsView: View {
 
                 SettingsRowDivider()
 
-                VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 20) {
                     settingCopy(
                         title: "Your messages",
                         detail: "The colour behind what you send in a session.")
+                        .frame(width: 160, alignment: .leading)
 
-                    MessageColourPicker(selection: settings.messageColour,
-                                        projectTints: previewProjectTints) { colour in
-                        settings.messageColour = colour
+                    VStack(alignment: .leading, spacing: 12) {
+                        MessageColourPicker(selection: settings.messageColour,
+                                            projectTints: previewProjectTints) { colour in
+                            settings.messageColour = colour
+                        }
+                        messageColourNote
                     }
-
-                    messageColourNote
                 }
                 .padding(14)
+
+                SettingsRowDivider()
+                sidebarIcons.id(SettingsSearchTarget.appearanceSidebarIcons.id)
             }
         }
     }
@@ -945,71 +1030,27 @@ struct SettingsView: View {
         }
     }
 
-    // Sidebar icons and the default bot each carry a preview and compact controls.
-    private var personalisation: some View {
-        ChoiceBlock("PERSONALISATION") {
-            HStack(alignment: .top, spacing: 12) {
-                sidebarIcons.id(SettingsSearchTarget.appearanceSidebarIcons.id)
-                botImage.id(SettingsSearchTarget.appearanceDefaultBot.id)
-            }
-        }
-    }
-
-    // The shape both cards of the pair wear: copy and preview followed by compact controls.
-    private func personalisationCard<Head: View, Controls: View>(
-        @ViewBuilder head: () -> Head,
-        @ViewBuilder controls: () -> Controls) -> some View {
-        SettingsCard {
-            VStack(alignment: .leading, spacing: 11) {
-                VStack(alignment: .leading, spacing: 11) { head() }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                VStack(alignment: .leading, spacing: 7) { controls() }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-        }
-    }
-
-    // A sample gets a sunken panel of its own instead of floating beside the copy, so it
-    // reads as a sample of the setting rather than as an icon decorating the label.
-    private func previewPanel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .surface(Theme.sunken, cornerRadius: 10, border: Theme.settingsHairline)
-    }
-
-    // One control behind its own small label. The fixed gutter keeps the controls in a
-    // card aligned with each other whatever their labels say.
-    private func controlRow<Content: View>(_ label: String,
-                                           @ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: 9) {
-            Text(label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .leading)
-            content()
-        }
-        // A shared row height puts the two cards' control stacks on the same lines, not
-        // just on the same bottom edge.
-        .frame(minHeight: 32)
-    }
-
     private var sidebarIcons: some View {
-        personalisationCard {
-            settingCopy(
-                title: "Sidebar icons",
-                detail: "Give projects a distinct, recognisable look.")
-
-            previewPanel { sidebarIconPreview }
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Sidebar icon preview")
-                .accessibilityValue(sidebarIconStyleLabel)
-        } controls: {
-            controlRow("Style") {
-                OptionMenu(value: sidebarIconStyleLabel) { sidebarIconStyleMenu }
-                    .accessibilityLabel("Sidebar icon style: \(sidebarIconStyleLabel)")
+        HStack(spacing: 20) {
+            settingCopy(title: "Sidebar icons", detail: "Give projects a distinct, recognisable look.")
+                .frame(width: 160, alignment: .leading)
+            HStack(spacing: 12) {
+                ForEach(Self.previewProjects.prefix(3)) { project in
+                    VStack(spacing: 5) {
+                        SidebarIdentityTile(avatar: SidebarAvatar(subject: .project, id: project.id),
+                                            name: project.name, tint: Theme.projectTint(for: project.name), side: 26)
+                        Text(project.name).font(.system(size: 9)).foregroundStyle(.secondary)
+                    }
+                }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Sidebar icon preview")
+            .accessibilityValue(sidebarIconStyleLabel)
+            Spacer(minLength: 0)
+            OptionMenu(value: sidebarIconStyleLabel) { sidebarIconStyleMenu }
+                .accessibilityLabel("Sidebar icon style: \(sidebarIconStyleLabel)")
         }
+        .padding(14)
     }
 
     private var sidebarIconStyleLabel: String {
@@ -1048,45 +1089,6 @@ struct SettingsView: View {
             side: 22))
         renderer.scale = 2
         return renderer.nsImage
-    }
-
-    // A miniature of the sidebar, drawn with the tile the rail itself uses, so a style is
-    // judged in the place it will be seen instead of on one floating icon.
-    @ViewBuilder private var sidebarIconPreview: some View {
-        VStack(spacing: 2) {
-            ForEach(Array(Self.previewProjects.enumerated()), id: \.element.id) { index, project in
-                HStack(spacing: 9) {
-                    SidebarIdentityTile(
-                        avatar: SidebarAvatar(subject: .project, id: project.id),
-                        name: project.name,
-                        tint: Theme.projectTint(for: project.name),
-                        side: 22)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(project.name)
-                            .font(.system(size: 11.5, weight: .semibold))
-                            .lineLimit(1)
-                        Text(project.collapsedPath)
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 4)
-                .background {
-                    // The lead row wears the selected treatment, the way one project is
-                    // always the open one in the rail.
-                    if index == 0 {
-                        RoundedRectangle(cornerRadius: 8).fill(Theme.card)
-                    }
-                }
-            }
-        }
-        .padding(8)
     }
 
     // Fixed examples keep repository names and paths out of settings screenshots.
@@ -1218,78 +1220,6 @@ struct SettingsView: View {
         }
     }
 
-    private var botImage: some View {
-        personalisationCard {
-            settingCopy(
-                title: "Default bot",
-                detail: "Used when a new session begins.")
-
-            previewPanel {
-                HStack(spacing: 11) {
-                    AgentAvatarView(image: defaultBot.displayImage(for: nil), size: 38)
-                    Text(defaultBot.personality.sampleLine)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(botPreviewBubble.fill(Theme.card))
-                        .overlay(botPreviewBubble.stroke(Theme.border))
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Default bot preview")
-            .accessibilityValue("\(defaultBotTitle): \(defaultBot.personality.sampleLine)")
-        } controls: {
-            controlRow("Default bot") { defaultBotPicker }
-
-            controlRow("Bots") {
-                HStack(spacing: 8) {
-                    ForEach(botRoster) { avatar in
-                        botRosterChip(avatar)
-                    }
-                    if settings.agentAvatars.count < AgentAvatarFile.maxCount {
-                        addBotSlot
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-        }
-    }
-
-    // The corner nearest the avatar is squared off, so the bubble points at the bot doing
-    // the talking.
-    private var botPreviewBubble: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(topLeadingRadius: 11,
-                               bottomLeadingRadius: 4,
-                               bottomTrailingRadius: 11,
-                               topTrailingRadius: 11)
-    }
-
-    // The built-in bot leads the roster: it is a choice like the others, and without it
-    // there would be no chip to ring while it is the default.
-    private var botRoster: [AgentAvatar] {
-        [AgentAvatarSelection.avatar(named: nil, from: [])] + settings.agentAvatars
-    }
-
-    private var defaultBot: AgentAvatar {
-        AgentAvatarSelection.avatar(
-            named: settings.defaultAgentAvatarName,
-            from: settings.agentAvatars)
-    }
-
-    private var defaultBotTitle: String {
-        defaultBot.personality.title
-    }
-
-    private var defaultBotPicker: some View {
-        OptionMenu(value: defaultBotTitle) { defaultBotMenu }
-            .accessibilityLabel("Default bot: \(defaultBotTitle)")
-    }
-
     private func settingCopy(title: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title)
@@ -1299,219 +1229,6 @@ struct SettingsView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-    }
-
-    private var defaultBotMenu: [MenuEntry] {
-        var entries: [MenuEntry] = [
-            .item(AgentPersonality.standard.title,
-                  image: AgentAvatarSelection.avatar(named: nil, from: [])
-                      .displayImage(for: nil),
-                  checked: settings.defaultAgentAvatarName == AgentAvatarSelection.defaultName,
-                  subtitle: AgentPersonality.standard.detail) {
-                settings.setDefaultAgentAvatarName(AgentAvatarSelection.defaultName)
-            }
-        ]
-        if !settings.agentAvatars.isEmpty {
-            entries.append(.separator)
-        }
-        entries.append(contentsOf: settings.agentAvatars.map { avatar in
-            .item(avatar.personality.title,
-                  image: avatar.displayImage(for: nil),
-                  checked: settings.defaultAgentAvatarName == avatar.url.lastPathComponent,
-                  subtitle: avatar.personality.detail) {
-                settings.setDefaultAgentAvatarName(avatar.url.lastPathComponent)
-            }
-        })
-        return entries
-    }
-
-    // Clicking a chip makes that bot the default, so the roster and the dropdown are one
-    // selection. What is left - the bot's personality - hangs off the chip's own menu,
-    // which keeps the narrower card down to two control rows.
-    @ViewBuilder private func botRosterChip(_ avatar: AgentAvatar) -> some View {
-        let selected = avatar.id == defaultBot.id
-        let name = avatar.url.lastPathComponent
-        let chip = Button {
-            settings.setDefaultAgentAvatarName(name)
-        } label: {
-            AgentAvatarView(image: avatar.displayImage(for: nil), size: 26)
-                .padding(3)
-                .overlay {
-                    if selected {
-                        Circle().stroke(Theme.accent, lineWidth: 2)
-                    }
-                }
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .hoverLift(amount: Motion.smallLift)
-        .accessibilityLabel("Default bot: \(avatar.personality.title)")
-        .accessibilityValue(selected ? "Selected" : "Not selected")
-
-        // The built-in bot is not the user's to rename or remove, so it carries neither
-        // the remove button nor the menu.
-        if name == AgentAvatarSelection.defaultName {
-            chip.appTooltip(avatar.personality.title)
-        } else {
-            chip
-                .overlay(alignment: .topTrailing) { removeBotBadge(avatar) }
-                .onHover { hovering in
-                    if hovering {
-                        hoveredBot = avatar.id
-                    } else if hoveredBot == avatar.id {
-                        hoveredBot = nil
-                    }
-                }
-                .appTooltip("\(avatar.personality.title) - right-click to change its personality")
-                .appContextMenu { botChipMenu(for: avatar) }
-        }
-    }
-
-    // Removing a bot is the one thing about the roster worth doing often, so it is a
-    // button on the chip the pointer is already on rather than a menu to go looking for.
-    // It stays inside the chip's own bounds, or moving onto it would end the hover that
-    // put it there.
-    @ViewBuilder private func removeBotBadge(_ avatar: AgentAvatar) -> some View {
-        if hoveredBot == avatar.id {
-            Button { confirmRemoveBot(avatar) } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 14, height: 14)
-                    .background(Circle().fill(Theme.deletion))
-                    .overlay(Circle().stroke(Theme.background, lineWidth: 1.5))
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .appTooltip("Remove bot")
-            .accessibilityLabel("Remove \(avatar.personality.title)")
-        }
-    }
-
-    private func botChipMenu(for avatar: AgentAvatar) -> [MenuEntry] {
-        personalityMenu(for: avatar) + [
-            .separator,
-            .item("Remove bot", kind: .destructive, icon: "trash") {
-                confirmRemoveBot(avatar)
-            }
-        ]
-    }
-
-    // A chip is small and the remove button sits on top of it, so a missed click would
-    // otherwise throw away a photo the user picked.
-    private func confirmRemoveBot(_ avatar: AgentAvatar) {
-        dialogs.show(.confirm(
-            "Remove \(avatar.personality.title)?",
-            message: "The bot and its photo are deleted. Sessions using it go back to the built-in bot.",
-            action: "Remove bot") {
-                removeBotImage(avatar)
-            })
-    }
-
-    // The empty slot at the end of the roster is where a new bot goes, so adding one costs
-    // the card no control of its own.
-    private var addBotSlot: some View {
-        Button(action: startBotDraft) {
-            Image(systemName: "plus")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 28, height: 28)
-                .background {
-                    Circle().stroke(Theme.settingsBorder,
-                                    style: StrokeStyle(lineWidth: 1, dash: [3, 2.5]))
-                }
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .hoverLift(amount: Motion.smallLift)
-        .appTooltip("Add bot")
-        .accessibilityLabel("Add bot")
-    }
-
-    private func personalityMenu(for avatar: AgentAvatar) -> [MenuEntry] {
-        AgentPersonality.allCases.map { personality in
-            .item(
-                personality.title,
-                checked: avatar.personality == personality,
-                subtitle: personality.detail) {
-                    setPersonality(personality, for: avatar)
-                }
-        }
-    }
-
-    // The whole bot is put together in one dialog, and the photo is chosen from inside it,
-    // so the file chooser never opens before the user has asked for a bot at all.
-    private func startBotDraft() {
-        botDraft.reset()
-        showBotDraft()
-    }
-
-    private func showBotDraft() {
-        let draft = botDraft
-        dialogs.show(Dialog(
-            title: "Add a bot",
-            message: "Pick a personality, and a photo if you have one. The session's working messages will sound like this bot.",
-            content: AnyView(BotDraftEditor(draft: draft, chooseImage: chooseBotImage)),
-            actions: [
-                .init(label: "Add bot", kind: .primary, handler: importBotDraft),
-                .init(label: "Cancel", kind: .cancel, handler: draft.reset)
-            ],
-            onCancel: draft.reset,
-            width: 460))
-    }
-
-    private func chooseBotImage() {
-        guard let url = FilePicker.chooseFile(prompt: "Choose",
-                                              message: "Pick a photo for this bot.",
-                                              types: [.image]) else { return }
-
-        guard let image = AgentAvatarFile.load(from: url) else {
-            // The draft dialog is still open behind this, so its own button brings it back
-            // rather than dropping the half-made bot.
-            dialogs.show(Dialog(
-                title: "Could not read that photo",
-                message: AgentAvatarError.couldNotReadImage.localizedDescription,
-                actions: [.init(label: "OK", kind: .cancel, handler: showBotDraft)],
-                onCancel: showBotDraft))
-            return
-        }
-        botDraft.url = url
-        botDraft.image = image
-    }
-
-    private func importBotDraft() {
-        let url = botDraft.url
-        let personality = botDraft.personality
-        botDraft.reset()
-        do {
-            if let url {
-                try settings.importAgentAvatars(from: [url], personality: personality)
-            } else {
-                try settings.addStockAgentAvatar(personality: personality)
-            }
-        } catch {
-            showBotImageFailure(error)
-        }
-    }
-
-    private func setPersonality(_ personality: AgentPersonality, for avatar: AgentAvatar) {
-        do {
-            try settings.setPersonality(personality, for: avatar)
-        } catch {
-            showBotImageFailure(error)
-        }
-    }
-
-    private func removeBotImage(_ avatar: AgentAvatar) {
-        do {
-            try settings.removeAgentAvatar(avatar)
-        } catch {
-            showBotImageFailure(error)
-        }
-    }
-
-    private func showBotImageFailure(_ error: Error) {
-        dialogs.show(.notice("Could not update the bots", message: error.localizedDescription))
     }
 
     // A turn that stops moving looks the same as one that is working, and the transcript
@@ -1822,89 +1539,6 @@ private struct SettingsThemePreview: View {
     }
 }
 
-// The bot being put together in the add dialog. It is a reference type so the dialog's
-// own buttons can read the choices made in its content while it stays open.
-@MainActor
-@Observable
-final class BotDraft {
-    var url: URL?
-    var image: NSImage?
-    var personality = AgentPersonality.standard
-
-    func reset() {
-        url = nil
-        image = nil
-        personality = .standard
-    }
-}
-
-private struct BotDraftEditor: View {
-    @Bindable var draft: BotDraft
-    let chooseImage: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                AgentAvatarView(
-                    image: draft.image ?? AgentAvatarArt.image(for: draft.personality),
-                    size: 48)
-
-                ActionButton(title: draft.image == nil ? "Add a photo…" : "Change photo…",
-                             tone: .sunken, height: 34, icon: "photo.badge.plus",
-                             action: chooseImage)
-
-                Spacer(minLength: 0)
-            }
-            .padding(.top, 4)
-
-            PersonalityPicker(selection: $draft.personality)
-        }
-    }
-}
-
-private struct PersonalityPicker: View {
-    @Binding var selection: AgentPersonality
-
-    private let columns = [
-        GridItem(.flexible(), spacing: 8),
-        GridItem(.flexible(), spacing: 8)
-    ]
-
-    var body: some View {
-        LazyVGrid(columns: columns, spacing: 8) {
-            ForEach(AgentPersonality.allCases, id: \.self) { personality in
-                Button { selection = personality } label: {
-                    HStack(spacing: 9) {
-                        AgentAvatarView(
-                            image: AgentAvatarArt.image(for: personality),
-                            size: 26)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(personality.title)
-                                .font(.system(size: 12, weight: .semibold))
-                            Text(personality.detail)
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(9)
-                    .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
-                    .surface(selection == personality ? Theme.field : Theme.card,
-                             cornerRadius: 9,
-                             border: selection == personality
-                                 ? Theme.accent.opacity(0.55) : Theme.border)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .hoverLift()
-            }
-        }
-        .padding(.top, 4)
-    }
-}
-
 private struct DayField: View {
     @Binding var days: Int
 
@@ -2017,8 +1651,8 @@ enum SettingsSearchIndex {
                "appearance session layout panel sidebar default first turn agent closed open"),
         result("Sidebar icons", .appearance, .appearanceSidebarIcons,
                "appearance style monogram dicebear motion still animated"),
-        result("Default bot", .appearance, .appearanceDefaultBot,
-               "appearance avatar image personality photo add remove delete"),
+        result("Your bots", .appearance, .appearanceDefaultBot,
+               "appearance default avatar image personality picture photo add edit remove delete collection crew"),
         result("Keyboard shortcuts", .keyboard, .keyboardShortcuts,
                "keys key command cmd control ctrl option shift escape reference list bindings"),
         result("Back and forward", .keyboard, .keyboardShortcuts,
