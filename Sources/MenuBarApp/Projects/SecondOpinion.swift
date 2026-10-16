@@ -85,8 +85,11 @@ enum SecondOpinion {
     }
 
     // Each CLI in its strictest read-only setting, so a reviewer that reaches for an edit
-    // is stopped by the agent rather than by the prompt.
-    static func arguments(for agent: AgentKind, prompt: String) -> [String] {
+    // is stopped by the agent rather than by the prompt. None of them gets the MCP servers
+    // the person has set up either: any one of those can write, and none is needed to read
+    // a diff.
+    static func arguments(for agent: AgentKind, prompt: String,
+                          copilotServers: [String] = []) -> [String] {
         switch agent {
         case .claudeCode:
             ["-p", prompt, "--output-format", "json",
@@ -98,11 +101,26 @@ enum SecondOpinion {
             ["exec", "--json", "--skip-git-repo-check",
              "--sandbox", "read-only",
              "-c", #"approval_policy="never""#,
+             "-c", "mcp_servers={}",
              prompt]
         case .copilot:
+            // Copilot remembers what was allowed in a folder from one run to the next, and
+            // a denial outranks every allowance, so writes and the shell are denied outright.
             ["-p", prompt, "--output-format", "json",
-             "--no-ask-user", "--disable-builtin-mcps", "--log-level", "none"]
+             "--no-ask-user", "--disable-builtin-mcps", "--log-level", "none",
+             "--deny-tool=shell", "--deny-tool=write"]
+                + copilotServers.flatMap { ["--disable-mcp-server", $0, "--deny-tool=\($0)"] }
         }
+    }
+
+    // The servers in Copilot's own MCP configuration, which it loads on every run and has
+    // no switch to leave out as a whole.
+    static func copilotServers(in url: URL = FileManager.default.homeDirectoryForCurrentUser
+                                .appendingPathComponent(".copilot/mcp-config.json")) -> [String] {
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let servers = object["mcpServers"] as? [String: Any] else { return [] }
+        return servers.keys.sorted()
     }
 
     static func review(_ patches: [Patch], agent: AgentKind, executable: String,
@@ -113,7 +131,8 @@ enum SecondOpinion {
         do {
             output = try await CommandRunner.run(
                 executable: executable,
-                arguments: arguments(for: agent, prompt: prompt(for: patches)),
+                arguments: arguments(for: agent, prompt: prompt(for: patches),
+                                     copilotServers: agent == .copilot ? copilotServers() : []),
                 currentDirectory: URL(fileURLWithPath: directory),
                 environment: environment,
                 timeout: .seconds(420),

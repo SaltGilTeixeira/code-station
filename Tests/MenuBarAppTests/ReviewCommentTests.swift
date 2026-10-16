@@ -125,6 +125,56 @@ struct ReviewCommentTests {
         #expect(!FileManager.default.fileExists(atPath: url.path))
     }
 
+    @Test func aRangeMatchesOnEveryLineNotJustItsLast() {
+        // Left on a block that ended in a brace; the block is gone, and a brace elsewhere
+        // must not take the comment.
+        let braces: [DiffLine] = [
+            DiffLine(id: 0, kind: .hunk, text: "@@ -1,3 +1,3 @@"),
+            DiffLine(id: 1, kind: .context, text: " if ready {"),
+            DiffLine(id: 2, kind: .context, text: "     start()"),
+            DiffLine(id: 3, kind: .context, text: " }")]
+        let gone = comment(.new, 7, excerpt: "guard let items else {\n    return\n}", lastLine: 9)
+        #expect(ReviewPlacement.place([gone], in: braces).unplaced.count == 1)
+    }
+
+    @Test func plainCodeThatMovedToOneOfSeveralPlacesIsNotGuessed() {
+        let braces: [DiffLine] = [
+            DiffLine(id: 0, kind: .hunk, text: "@@ -1,4 +1,4 @@"),
+            DiffLine(id: 1, kind: .context, text: " }"),
+            DiffLine(id: 2, kind: .context, text: " start()"),
+            DiffLine(id: 3, kind: .context, text: " }")]
+        // On its own line it still holds, whatever it says.
+        #expect(ReviewPlacement.place([comment(.new, 1, excerpt: "}")], in: braces).below[1]?.count == 1)
+        // Moved, a lone brace could be either one.
+        #expect(ReviewPlacement.place([comment(.new, 9, excerpt: "}")], in: braces).unplaced.count == 1)
+    }
+
+    @Test func aRunFollowsItsCodeAndKeepsItsLength() {
+        let moved = ReviewPlacement.locate(DiffAnchor(side: .new, line: 9, lastLine: 10),
+                                           excerpt: "let first = items.first!\nprint(first)",
+                                           in: NumberedDiffLine.lines(lines))
+        #expect(moved?.anchor == DiffAnchor(side: .new, line: 11, lastLine: 12))
+        #expect(moved?.lastID == 4)
+    }
+
+    @Test func sendingTakesOnlyTheCommentsThatWereSent() {
+        let store = ReviewCommentStore(url: nil)
+        let session = UUID()
+        let sent = comment(.new, 11, excerpt: "x")
+        let arrivedLater = comment(.new, 12, excerpt: "y")
+        store.add(sent, to: session)
+        store.add(arrivedLater, to: session)
+        store.remove([sent.id], from: session)
+        #expect(store.comments(session).map(\.id) == [arrivedLater.id])
+    }
+
+    @Test func aWorkspaceNamesTheProjectEvenWhenOnlyOneHasComments() {
+        var api = comment(.new, 3, excerpt: "y", body: "Two")
+        api.root = "/api"
+        let prompt = ReviewPrompt.feedback([api], projectNames: ["/repo": "web", "/api": "server"])
+        #expect(prompt.contains("server/App.swift, line 3"))
+    }
+
     // MARK: - Drawing
 
     @Test func numbersCarryTheirLineAndCommentsGetRowsOfTheirOwn() {
@@ -235,6 +285,25 @@ struct SecondOpinionTests {
         let codex = SecondOpinion.arguments(for: .codex, prompt: "p")
         #expect(codex.contains("read-only"))
         #expect(codex.last == "p")
+    }
+
+    @Test func noReviewerGetsThePersonsMCPServersOrWriteAccess() throws {
+        let codex = SecondOpinion.arguments(for: .codex, prompt: "p")
+        #expect(codex.contains("mcp_servers={}"))
+        let copilot = SecondOpinion.arguments(for: .copilot, prompt: "p", copilotServers: ["files"])
+        #expect(copilot.contains("--deny-tool=shell"))
+        #expect(copilot.contains("--deny-tool=write"))
+        #expect(copilot.contains("--deny-tool=files"))
+        let disabled = try #require(copilot.firstIndex(of: "--disable-mcp-server"))
+        #expect(copilot[disabled + 1] == "files")
+    }
+
+    @Test func copilotsServersAreReadFromItsOwnConfiguration() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mcp-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try Data(#"{"mcpServers": {"files": {}, "browser": {}}}"#.utf8).write(to: url)
+        #expect(SecondOpinion.copilotServers(in: url) == ["browser", "files"])
+        #expect(SecondOpinion.copilotServers(in: url.appendingPathExtension("missing")).isEmpty)
     }
 
     @Test func claudesAnswerIsItsResultField() {

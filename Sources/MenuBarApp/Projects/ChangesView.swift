@@ -139,6 +139,9 @@ struct ReviewTarget {
 struct CommentDraft: Equatable {
     var anchor: DiffAnchor
     var path: String
+    // The code under the lines when they were picked. The agent can change the file while
+    // the note is being written, so the note stays with this code, not with a line number.
+    var excerpt = ""
     var text = ""
     // The comment being edited, or nil for a new one.
     var editing: UUID?
@@ -228,6 +231,9 @@ struct ChangesView: View {
     @State private var diffScroll = DiffTextView.Scroll.top
     // Gap rows git is reading the hidden lines for right now.
     @State private var expanding: Set<String> = []
+    // Counts the diff texts asked for, so one that finishes after a newer one was started,
+    // for new lines or new comments, is dropped rather than shown over it.
+    @State private var renderGeneration = 0
     @State private var appliedInitialSelection = false
 
     private var files: [GitChange] { snapshot?.files ?? [] }
@@ -352,6 +358,7 @@ struct ChangesView: View {
         .onChange(of: fileSelection.activeID) { _, path in
             if commentDraft?.path != path { commentDraft = nil }
         }
+        .onChange(of: diff) { _, _ in followDraft() }
         // Amending reuses the last message as the starting point; the typed one comes
         // back if the box is unticked.
         .onChange(of: amend) { _, on in
@@ -1697,6 +1704,8 @@ struct ChangesView: View {
     private func renderDiff() async {
         guard let diff, !diff.lines.isEmpty else { return }
         let lines = diff.lines
+        renderGeneration += 1
+        let generation = renderGeneration
         let text = await DiffText.build(
             lines,
             language: (mode == .changes ? selected : nil).flatMap {
@@ -1704,8 +1713,9 @@ struct ChangesView: View {
             },
             scale: appSettings.textSize.scale, numbered: mode == .changes,
             comments: mode == .changes ? diffComments(for: selected, lines: lines) : nil)
-        // Another file, or more of this one, can have opened while the text was built.
-        guard self.diff?.lines == lines else { return }
+        // Another file, or more of this one, can have opened while the text was built, or
+        // a comment have come or gone and asked for a newer one.
+        guard self.diff?.lines == lines, generation == renderGeneration else { return }
         diffText = text
     }
 
@@ -1766,16 +1776,26 @@ struct ChangesView: View {
             await reload()
             return
         }
+        renderGeneration += 1
+        let generation = renderGeneration
+        let comments = diffComments(for: file, lines: loaded.lines)
         let text = loaded.lines.isEmpty ? nil : await DiffText.build(
             loaded.lines,
             language: CodeLanguage(fileExtension: (file.path as NSString).pathExtension),
             scale: appSettings.textSize.scale, numbered: true,
-            comments: diffComments(for: file, lines: loaded.lines))
-        guard !Task.isCancelled, mode == .changes, fileSelection.activeID == file.id else { return }
+            comments: comments)
+        guard !Task.isCancelled, mode == .changes, fileSelection.activeID == file.id,
+              generation == renderGeneration else { return }
         diffScroll = .top
         diff = loaded
         diffText = text
         loadingDiff = false
+        // A comment that came or went while this was built found no diff to draw into, so
+        // the text is built again with it.
+        if !loaded.lines.isEmpty, diffComments(for: file, lines: loaded.lines) != comments {
+            diffScroll = .hold
+            await renderDiff()
+        }
     }
 
     // MARK: - Review
@@ -1804,20 +1824,34 @@ struct ChangesView: View {
         guard let file = selected else { return }
         // A saved comment keeps the lines it was left on, so only a new one stretches.
         if extending, let draft = commentDraft, draft.path == file.path, draft.editing == nil {
-            commentDraft?.anchor = draft.anchor.extended(to: anchor)
+            let stretched = draft.anchor.extended(to: anchor)
+            commentDraft?.anchor = stretched
+            commentDraft?.excerpt = excerpt(stretched)
         } else if commentDraft?.path == file.path, commentDraft?.editing == nil,
                   commentDraft?.text.isBlank == false {
             // A note part way written moves to the new line rather than being dropped.
             commentDraft?.anchor = anchor
+            commentDraft?.excerpt = excerpt(anchor)
         } else {
-            commentDraft = CommentDraft(anchor: anchor, path: file.path)
+            commentDraft = CommentDraft(anchor: anchor, path: file.path, excerpt: excerpt(anchor))
         }
         commentFocused = true
     }
 
+    // A diff read again under a note being written can have moved its lines. The note
+    // follows its code there, so it is still saved against the lines it was written for.
+    private func followDraft() {
+        guard let draft = commentDraft, draft.editing == nil, draft.path == selected?.path,
+              let lines = diff?.lines,
+              let found = ReviewPlacement.locate(draft.anchor, excerpt: draft.excerpt,
+                                                 in: NumberedDiffLine.lines(lines)),
+              found.anchor != draft.anchor else { return }
+        commentDraft?.anchor = found.anchor
+    }
+
     private func openComment(_ comment: ReviewComment) {
         commentDraft = CommentDraft(anchor: comment.anchor, path: comment.path,
-                                    text: comment.body, editing: comment.id)
+                                    excerpt: comment.excerpt, text: comment.body, editing: comment.id)
         commentFocused = true
     }
 
@@ -1838,7 +1872,7 @@ struct ChangesView: View {
             review.reviews.update(id, body: draft.text.trimmed, in: review.sessionID)
         } else {
             review.reviews.add(ReviewComment(root: repoRoot, path: draft.path, anchor: draft.anchor,
-                                      excerpt: excerpt(draft.anchor), body: draft.text.trimmed),
+                                      excerpt: draft.excerpt, body: draft.text.trimmed),
                         to: review.sessionID)
         }
         commentDraft = nil
@@ -2023,7 +2057,9 @@ struct ChangesView: View {
             actions: [
                 .init(label: "Send", kind: .primary) {
                     review.send(prompt)
-                    review.reviews.clear(review.sessionID)
+                    // Only what the preview showed went, so a second opinion that finished
+                    // while it was open keeps its findings for the next review.
+                    review.reviews.remove(Set(comments.map(\.id)), from: review.sessionID)
                     commentDraft = nil
                     review.sent()
                 },

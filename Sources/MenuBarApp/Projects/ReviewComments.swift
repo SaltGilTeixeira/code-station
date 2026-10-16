@@ -125,19 +125,45 @@ struct ReviewPlacement: Equatable {
         let numbered = NumberedDiffLine.lines(lines)
         var placement = ReviewPlacement()
         for comment in comments.sorted(by: { $0.created < $1.created }) {
-            let target = comment.lastLine ?? comment.line
-            let expected = comment.excerpt.components(separatedBy: "\n").last?.trimmed ?? ""
-            let sameSide = numbered.filter { $0.side == comment.side }
-            let matches: (NumberedDiffLine) -> Bool = { expected.isEmpty || $0.code.trimmed == expected }
-            let found = sameSide.first(where: { $0.number == target && matches($0) })
-                ?? sameSide.filter(matches).min(by: { abs($0.number - target) < abs($1.number - target) })
-            if let found, !expected.isEmpty || found.number == target {
-                placement.below[found.id, default: []].append(comment)
+            if let found = locate(comment.anchor, excerpt: comment.excerpt, in: numbered) {
+                placement.below[found.lastID, default: []].append(comment)
             } else {
                 placement.unplaced.append(comment)
             }
         }
         return placement
+    }
+
+    // Where the lines that held `excerpt` are now, and the id of the last of them. The
+    // lines a comment was left on win while every one of them still holds its code;
+    // otherwise the nearest run that does. Code as plain as a lone brace turns up in many
+    // places, so if it has moved and could be any of several, it is nowhere rather than
+    // somewhere wrong. A comment that quotes nothing can only stay on its own number.
+    static func locate(_ anchor: DiffAnchor, excerpt: String,
+                       in numbered: [NumberedDiffLine]) -> (anchor: DiffAnchor, lastID: Int)? {
+        var lines: [Int: NumberedDiffLine] = [:]
+        for line in numbered where line.side == anchor.side { lines[line.number] = line }
+        let span = (anchor.lastLine ?? anchor.line) - anchor.line
+        func last(from start: Int, count: Int) -> NumberedDiffLine? {
+            lines[start + span] ?? lines[start + count - 1]
+        }
+        guard !excerpt.isBlank else {
+            return lines[anchor.line + span].map { (anchor, $0.id) }
+        }
+        let expected = excerpt.components(separatedBy: "\n").map(\.trimmed)
+        func holds(_ start: Int) -> Bool {
+            expected.enumerated().allSatisfy { offset, code in lines[start + offset]?.code.trimmed == code }
+        }
+        if holds(anchor.line), let end = last(from: anchor.line, count: expected.count) {
+            return (anchor, end.id)
+        }
+        let starts = lines.keys.filter(holds).sorted { abs($0 - anchor.line) < abs($1 - anchor.line) }
+        guard let best = starts.first else { return nil }
+        let distinctive = expected.joined().filter { $0.isLetter || $0.isNumber }.count >= 4
+        guard starts.count == 1 || distinctive,
+              let end = last(from: best, count: expected.count) else { return nil }
+        let moved = DiffAnchor(side: anchor.side, line: best, lastLine: anchor.lastLine.map { _ in best + span })
+        return (moved, end.id)
     }
 }
 
@@ -149,7 +175,9 @@ enum ReviewPrompt {
         let ordered = comments.sorted {
             ($0.root, $0.path, $0.side == .new ? 0 : 1, $0.line) < ($1.root, $1.path, $1.side == .new ? 0 : 1, $1.line)
         }
-        let spansProjects = Set(comments.map(\.root)).count > 1
+        // Named by the projects in the workspace rather than the ones the comments touch:
+        // two projects can each have a src/App.swift, and the agent sees both.
+        let spansProjects = projectNames.count > 1 || Set(comments.map(\.root)).count > 1
         var text = comments.count == 1
             ? "I reviewed your changes and left a comment. Please address it. "
                 + "If you disagree, say why instead of changing the code."
@@ -242,6 +270,17 @@ final class ReviewCommentStore {
     func remove(_ id: UUID, from sessionID: UUID) {
         comments[sessionID]?.removeAll { $0.id == id }
         if comments[sessionID]?.isEmpty == true { comments[sessionID] = nil }
+        saver?.schedule()
+    }
+
+    // Takes away the comments that were just sent, and only those: one that arrived while
+    // the preview was open was never part of the prompt, so it stays for the next one.
+    func remove(_ ids: Set<UUID>, from sessionID: UUID) {
+        comments[sessionID]?.removeAll { ids.contains($0.id) }
+        if comments[sessionID]?.isEmpty == true {
+            comments[sessionID] = nil
+            notes[sessionID] = nil
+        }
         saver?.schedule()
     }
 
